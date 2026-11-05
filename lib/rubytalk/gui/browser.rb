@@ -1,0 +1,218 @@
+# NOTE: no frozen_string_literal here: the tk gem mutates (force_encoding) strings it is given.
+
+module RubyTalk
+  module GUI
+    # The System Browser, in the Smalltalk-80 layout:
+    #
+    #   category | class | protocol | method
+    #   ---------------------------------------
+    #   code pane (class definition, method source, or a template)
+    #
+    # Selecting a category shows a template for a new class; a class shows its
+    # definition; a protocol shows a template for a new method; a method shows
+    # its source. Accept (Cmd-S / Ctrl-S) compiles whatever is in the code pane
+    # and logs it in changes.rb. Right-click lists for remove / new subclass.
+    class Browser
+      def self.open(target = nil)
+        new(target)
+      end
+
+      attr_reader :code
+
+      def initialize(target = nil)
+        @changes = RubyTalk.changes
+        @catalog = Reflection.catalog(@changes)
+        @category = @klass = @protocol = @method = nil
+        @window = TkToplevel.new
+        GUI.window_title(@window, 'System Browser')
+        build
+        GUI.build_menubar(@window, -> { @code })
+        GUI.windows << self
+        @categories.set(@catalog.names)
+        select_target(target) if target.is_a?(Module) && Reflection.name_of(target)
+      end
+
+      # Navigate to a class (and optionally one of its methods).
+      def select_target(klass, method: nil, side: :instance)
+        @classes.clear_filter
+        @categories.select_value(Reflection.category_of(klass, @changes))
+        @classes.select_value(klass)
+        @side_var.value = side.to_s.dup
+        return unless method
+
+        @protocols.select_value(:all)
+        @methods.select_value(method.to_sym)
+      end
+
+      private
+
+      def build
+        panes = TkFrame.new(@window)
+        panes.pack(side: 'top', fill: 'both', expand: 1)
+        @categories = pane(panes, 18) { |value| category_selected(value) }
+        @classes = pane(panes, 26, filter: true) { |value| class_selected(value) }
+        @protocols = pane(panes, 14) { |value| protocol_selected(value) }
+        @methods = pane(panes, 28) { |value| method_selected(value) }
+        @classes.context_menu([['New subclass', -> { new_subclass }], ['Remove class', -> { remove_class }]])
+        @methods.context_menu([['Remove method', -> { remove_method }]])
+        build_options
+        @code = CodeEditor.new(@window, width: 100, height: 18,
+                                        evaluator: ->(source) { Evaluator.evaluate(source, workspace_scope, file: 'browser') },
+                                        on_accept: -> { accept })
+        @code.frame.pack(side: 'top', fill: 'both', expand: 1)
+      end
+
+      def pane(parent, width, filter: false, &on_select)
+        list = SelectableList.new(parent, width: width, height: 12, filter: filter,
+                                          on_filter: -> { refresh_classes }, &on_select)
+        list.frame.pack(side: 'left', fill: 'both', expand: 1)
+        list
+      end
+
+      def build_options
+        @side_var = TkVariable.new(+'instance')
+        @inherited_var = TkVariable.new(0)
+        bar = TkFrame.new(@window)
+        bar.pack(side: 'top', fill: 'x')
+        %w[instance class].each do |side|
+          TkRadiobutton.new(bar, text: side, variable: @side_var, value: side,
+                                 command: proc { GUI.safely { side_changed } }).pack(side: 'left', padx: 4)
+        end
+        TkCheckButton.new(bar, text: 'show inherited', variable: @inherited_var,
+                               command: proc { GUI.safely { refresh_methods } }).pack(side: 'left', padx: 12)
+        @status = TkLabel.new(bar, text: +'', anchor: 'w')
+        @status.pack(side: 'left', fill: 'x', expand: 1, padx: 8)
+      end
+
+      def workspace_scope
+        @workspace_scope ||= Evaluator.new_binding
+      end
+
+      def side
+        @side_var.value.to_s == 'class' ? :class : :instance
+      end
+
+      def inherited?
+        @inherited_var.value.to_s == '1'
+      end
+
+      def status(message)
+        @status.configure(text: message.to_s.dup)
+      end
+
+      # --- selection handlers -------------------------------------------
+
+      def category_selected(name)
+        @category = name
+        @klass = @protocol = @method = nil
+        refresh_classes
+        @protocols.set([])
+        @methods.set([])
+        @code.set_contents(name ? Reflection.new_class_template : '')
+        status(name ? 'Edit the class definition, then Accept to create a class.' : '')
+      end
+
+      def refresh_classes
+        modules = @category ? @catalog.classes_in(@category) : []
+        needle = @classes.filter_text.strip.downcase
+        modules = modules.select { |mod| Reflection.name_of(mod).downcase.include?(needle) } unless needle.empty?
+        @classes.set(modules, modules.map { |mod| Reflection.name_of(mod) })
+        @classes.select_value(@klass, notify: false) if @klass
+      end
+
+      def class_selected(klass)
+        @klass = klass
+        @protocol = @method = nil
+        @methods.set([])
+        if klass.nil?
+          @protocols.set([])
+          return
+        end
+        @protocols.set(Reflection::PROTOCOLS.map(&:last), Reflection::PROTOCOLS.map(&:first))
+        @code.set_contents(Reflection.class_definition(klass))
+        status(Reflection.class_summary(klass))
+      end
+
+      def protocol_selected(protocol)
+        @protocol = protocol
+        @method = nil
+        refresh_methods
+        return unless protocol
+
+        @code.set_contents(Reflection.method_template)
+        status("New #{side} method on #{Reflection.name_of(@klass)}: edit the template, then Accept.")
+      end
+
+      def method_selected(name)
+        @method = name
+        return unless name && @klass
+
+        @code.set_contents(Reflection.method_text(@klass, side, name, @changes))
+        status(Reflection.method_summary(@klass, side, name))
+      end
+
+      def side_changed
+        @method = nil
+        refresh_methods
+        @code.set_contents(Reflection.method_template) if @protocol
+      end
+
+      def refresh_methods
+        return @methods.set([]) unless @klass && @protocol
+
+        names = Reflection.methods_for(@klass, side, @protocol, inherited?)
+        labels = names.map { |name| Reflection.method_label(@klass, side, name, @changes) }
+        @methods.set(names, labels)
+        @methods.select_value(@method, notify: false) if @method
+      end
+
+      # --- commands -----------------------------------------------------
+
+      def accept
+        outcome = Compiler.accept(@code.contents, klass: @klass, side: side, changes: @changes)
+        unless outcome.ok
+          status("Not accepted: #{outcome.message.to_s.lines.first.to_s.strip}")
+          ::Transcript.show_cr(outcome.message)
+          return
+        end
+        @catalog = Reflection.catalog(@changes)
+        @categories.set(@catalog.names)
+        select_target(outcome.klass, method: outcome.method_name, side: outcome.side)
+        status(outcome.message)
+      end
+
+      def new_subclass
+        return unless @klass
+
+        @code.set_contents(Reflection.new_class_template(Reflection.name_of(@klass)))
+        status('Edit the new class name, then Accept.')
+      end
+
+      def remove_method
+        return unless @klass && @method
+        return unless GUI.confirm("Remove #{Reflection.name_of(@klass)}##{@method}?")
+
+        Compiler.remove_method(@klass, side, @method, @changes)
+        @method = nil
+        refresh_methods
+        @code.set_contents(Reflection.method_template)
+        status('Method removed.')
+      rescue NameError => e
+        status("Cannot remove: #{e.message.lines.first.to_s.strip}")
+      end
+
+      def remove_class
+        return unless @klass
+        return unless GUI.confirm("Remove class #{Reflection.name_of(@klass)} and all its changes?")
+
+        Compiler.remove_class(@klass, @changes)
+        @catalog = Reflection.catalog(@changes)
+        @categories.set(@catalog.names)
+        @categories.select_value(Reflection::USER)
+        status('Class removed.')
+      rescue Compiler::Error => e
+        status(e.message)
+      end
+    end
+  end
+end

@@ -1,0 +1,8 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Start RubyTalk in the current directory. If ./changes.rb exists it is loaded
+# into the environment; changes made in the browser are saved back on exit.
+require_relative '../lib/rubytalk'
+
+RubyTalk.run(dir: Dir.pwd)
