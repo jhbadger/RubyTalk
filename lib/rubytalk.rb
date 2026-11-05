@@ -14,21 +14,29 @@ module RubyTalk
   class << self
     attr_accessor :changes
 
-    # Loads changes.rb from +dir+, then opens the environment.
-    def run(dir: Dir.pwd)
+    # Loads changes.rb from +dir+, then opens the environment (Transcript, a
+    # System Browser and a Workspace). With selftest: true it runs the built-in
+    # GUI checks in a temporary directory instead and exits.
+    def run(dir: Dir.pwd, selftest: false)
       begin
         require_relative 'rubytalk/gui'
       rescue LoadError => e
         abort "RubyTalk needs the 'tk' gem (#{e.message}).\n  brew install tcl-tk && gem install tk"
       end
+      if selftest
+        require 'tmpdir'
+        dir = Dir.mktmpdir('rubytalk-selftest')
+        at_exit { FileUtils.remove_entry(dir) if File.directory?(dir) }
+      end
       setup(dir)
-      GUI.start
+      GUI.start(selftest: selftest)
     end
 
     # Everything except the windows: useful for tests and scripts.
     def setup(dir = Dir.pwd)
       self.changes = ChangeSet.new(File.join(File.expand_path(dir), 'changes.rb'))
       changes.load!
+      changes.autosave = true
       @exit_hook ||= at_exit { save_changes }
       changes
     end
@@ -51,3 +59,4 @@ require_relative 'rubytalk/source'
 require_relative 'rubytalk/changes'
 require_relative 'rubytalk/reflection'
 require_relative 'rubytalk/compiler'
+require_relative 'rubytalk/search'

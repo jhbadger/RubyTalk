@@ -15,15 +15,56 @@ module RubyTalk
 
     @windows = []
     @last_pump = 0.0
+    @cascade = 0
 
     class << self
       # Keeps window objects alive for the life of the session.
       attr_reader :windows
 
-      def start
-        MainWindow.new
+      # Opens the Transcript, a System Browser and a Workspace, then runs Tk.
+      # With selftest: true, runs the built-in checks against real widgets and
+      # exits instead (see SelfTest).
+      def start(selftest: false)
+        main = MainWindow.new
         install_mac_quit
+        if selftest
+          failures = SelfTest.new(main).run
+          begin
+            Tk.root.destroy
+          rescue StandardError
+            nil
+          end
+          exit(failures.zero? ? 0 : 1)
+        end
+        Browser.open
+        Workspace.new
         Tk.mainloop
+      end
+
+      # Stagger new windows so they do not stack exactly on top of each other.
+      def place(window, x: nil, y: nil)
+        unless x
+          step = @cascade % 8
+          @cascade += 1
+          x = 70 + (step * 28)
+          y = 80 + (step * 28)
+        end
+        Tk.tk_call('wm', 'geometry', window.path, "+#{x}+#{y}")
+      end
+
+      # Draw anything pending now (used before slow searches).
+      def flush
+        Tk.tk_call('update', 'idletasks')
+      rescue StandardError
+        nil
+      end
+
+      # Run an implementors/senders search and show the results in a Method List.
+      def show_method_list(kind, selector)
+        ::Transcript.show_cr("Searching for #{kind} of #{selector}...")
+        flush
+        hits = kind == :senders ? Search.senders(selector) : Search.implementors(selector)
+        MethodList.new("#{kind.to_s.capitalize} of #{selector}", hits)
       end
 
       # Run a callback body; never let an exception reach Tk's event loop.
@@ -148,6 +189,8 @@ module RubyTalk
         add_item(edit, 'Print it', "#{MOD_LABEL}-P") { provider.call&.print_it }
         add_item(edit, 'Inspect it', "#{MOD_LABEL}-I") { provider.call&.inspect_it }
         add_item(edit, 'Browse it', "#{MOD_LABEL}-B") { provider.call&.browse_it }
+        add_item(edit, 'Implementors of it', "#{MOD_LABEL}-M") { provider.call&.implementors_of_it }
+        add_item(edit, 'Senders of it', "#{MOD_LABEL}-N") { provider.call&.senders_of_it }
         if provider.call&.can_accept?
           edit.add('separator')
           add_item(edit, 'Accept', "#{MOD_LABEL}-S") { provider.call&.accept }
@@ -179,3 +222,5 @@ require_relative 'gui/main_window'
 require_relative 'gui/workspace'
 require_relative 'gui/browser'
 require_relative 'gui/inspector'
+require_relative 'gui/method_list'
+require_relative 'gui/self_test'

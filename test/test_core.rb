@@ -259,6 +259,85 @@ class CoreTest < Minitest::Test
     assert_empty @changes.entries
   end
 
+  # --- Autosave ---------------------------------------------------------
+
+  def test_autosave_writes_each_change_and_keeps_one_startup_backup
+    path = File.join(@dir, 'changes.rb')
+    File.write(path, "# old\n")
+    @changes.autosave = true
+    accept("class RtAuto\nend\n")
+    assert_includes File.read(path), 'target=RtAuto'
+    assert_equal "# old\n", File.read("#{path}.bak")
+    accept("def a; end\n", klass: RtAuto)
+    assert_includes File.read(path), 'key=a'
+    assert_equal "# old\n", File.read("#{path}.bak"), 'backup stays the file as it was at startup'
+    refute @changes.dirty?
+    RubyTalk::Compiler.remove_method(RtAuto, :instance, 'a', @changes)
+    assert_includes File.read(path), 'kind=remove_method'
+  ensure
+    Object.send(:remove_const, :RtAuto) if defined?(RtAuto)
+  end
+
+  def test_autosave_failure_does_not_break_accept
+    changes = RubyTalk::ChangeSet.new('/nonexistent-dir-for-rubytalk/changes.rb')
+    changes.autosave = true
+    out = RubyTalk::Compiler.accept("class RtNoDisk\nend\n", changes: changes)
+    assert out.ok, out.message
+    refute changes.autosave
+    assert changes.dirty?, 'still pending for the exit save'
+    assert_match(/autosave disabled/, Transcript.buffer)
+  ensure
+    Object.send(:remove_const, :RtNoDisk) if defined?(RtNoDisk)
+  end
+
+  # --- Implementors / senders ------------------------------------------
+
+  def fixture_sender
+    rt_unique_selector_zzz
+  end
+
+  def test_mentions_ignores_comments_strings_and_definitions
+    mentions = ->(code, sel = 'upcase') { RubyTalk::Source.mentions?(code, sel) }
+    assert mentions.call("x.upcase")
+    assert mentions.call("x.map(&:upcase)")
+    assert mentions.call("send(:upcase)")
+    refute mentions.call("# upcase\n'upcase'\n\"upcase\"")
+    refute mentions.call("def upcase\n  1\nend")
+    refute mentions.call("def self.upcase\n  1\nend")
+    assert mentions.call("def upcase\n  upcase\nend"), 'a recursive call still counts'
+    assert mentions.call("self.name = 1", 'name=')
+    refute mentions.call("a[1]", '[]'), 'bracket selectors are not searched'
+  end
+
+  def test_implementors
+    labels = RubyTalk::Search.implementors('upcase').map(&:label)
+    assert_includes labels, 'String#upcase'
+    assert_includes labels, 'Symbol#upcase'
+    assert_includes RubyTalk::Search.implementors('fixture_method').map(&:label), 'CoreTest#fixture_method'
+    accept("class RtImpl\n  def self.rt_cls_impl; end\nend\n")
+    assert_includes RubyTalk::Search.implementors('rt_cls_impl').map(&:label), 'RtImpl.rt_cls_impl'
+    assert_empty RubyTalk::Search.implementors('no_such_method_anywhere_zzz')
+  ensure
+    Object.send(:remove_const, :RtImpl) if defined?(RtImpl)
+  end
+
+  def test_senders_in_files_and_in_changes
+    labels = RubyTalk::Search.senders('rt_unique_selector_zzz', @changes).map(&:label)
+    assert_equal ['CoreTest#fixture_sender'], labels
+
+    accept("class RtSend\n  def go\n    rt_unique_selector_zzz\n  end\nend\n")
+    accept("def again\n  rt_unique_selector_zzz\nend\n", klass: RtSend, side: :class)
+    accept("attr_accessor :rt_unique_selector_zzz\n", klass: RtSend) # a body statement: mentions it as a symbol
+    hits = RubyTalk::Search.senders('rt_unique_selector_zzz', @changes)
+    labels = hits.map(&:label)
+    assert_includes labels, 'RtSend (class body)'
+    assert_includes labels, 'RtSend.again'
+    assert_includes labels, 'CoreTest#fixture_sender'
+    assert_empty RubyTalk::Search.senders('no_such_selector_anywhere_zzz', @changes)
+  ensure
+    Object.send(:remove_const, :RtSend) if defined?(RtSend)
+  end
+
   # --- Reflection -------------------------------------------------------
 
   def test_categories

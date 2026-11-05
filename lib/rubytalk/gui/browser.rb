@@ -13,23 +13,24 @@ module RubyTalk
     # its source. Accept (Cmd-S / Ctrl-S) compiles whatever is in the code pane
     # and logs it in changes.rb. Right-click lists for remove / new subclass.
     class Browser
-      def self.open(target = nil)
-        new(target)
+      def self.open(target = nil, method: nil, side: :instance)
+        new(target, method: method, side: side)
       end
 
       attr_reader :code
 
-      def initialize(target = nil)
+      def initialize(target = nil, method: nil, side: :instance)
         @changes = RubyTalk.changes
         @catalog = Reflection.catalog(@changes)
         @category = @klass = @protocol = @method = nil
         @window = TkToplevel.new
         GUI.window_title(@window, 'System Browser')
+        GUI.place(@window)
         build
         GUI.build_menubar(@window, -> { @code })
         GUI.windows << self
         @categories.set(@catalog.names)
-        select_target(target) if target.is_a?(Module) && Reflection.name_of(target)
+        select_target(target, method: method, side: side) if target.is_a?(Module) && Reflection.name_of(target)
       end
 
       # Navigate to a class (and optionally one of its methods).
@@ -54,7 +55,9 @@ module RubyTalk
         @protocols = pane(panes, 14) { |value| protocol_selected(value) }
         @methods = pane(panes, 28) { |value| method_selected(value) }
         @classes.context_menu([['New subclass', -> { new_subclass }], ['Remove class', -> { remove_class }]])
-        @methods.context_menu([['Remove method', -> { remove_method }]])
+        @methods.context_menu([['Implementors of this selector', -> { selector_search(:implementors) }],
+                               ['Senders of this selector', -> { selector_search(:senders) }],
+                               ['Remove method', -> { remove_method }]])
         build_options
         @code = CodeEditor.new(@window, width: 100, height: 18,
                                         evaluator: ->(source) { Evaluator.evaluate(source, workspace_scope, file: 'browser') },
@@ -179,6 +182,10 @@ module RubyTalk
         @categories.set(@catalog.names)
         select_target(outcome.klass, method: outcome.method_name, side: outcome.side)
         status(outcome.message)
+      end
+
+      def selector_search(kind)
+        GUI.show_method_list(kind, @method.to_s) if @method
       end
 
       def new_subclass

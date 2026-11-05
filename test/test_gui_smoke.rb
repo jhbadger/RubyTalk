@@ -30,6 +30,27 @@ class GuiSmokeTest < Minitest::Test
     object.instance_variable_get(name)
   end
 
+  def test_start_opens_transcript_browser_and_workspace
+    GUI.start
+    assert_equal [GUI::MainWindow, GUI::Browser, GUI::Workspace], GUI.windows.last(3).map(&:class)
+  end
+
+  def test_method_list_accept_recompiles_in_place
+    Compiler.accept("class RtMl\nend\n", changes: RubyTalk.changes)
+    Compiler.accept("def v\n  1\nend\n", klass: RtMl, changes: RubyTalk.changes)
+    GUI.show_method_list(:implementors, 'v')
+    list = GUI.windows.last
+    assert_instance_of GUI::MethodList, list
+    index = ivar(list, :@hits).index { |hit| hit.label == 'RtMl#v' }
+    ivar(list, :@list).box.click(index)
+    assert_equal "def v\n  1\nend\n", list.code.contents
+    list.code.set_contents("def v\n  2\nend\n")
+    list.code.accept
+    assert_equal 2, RtMl.new.v
+  ensure
+    Object.send(:remove_const, :RtMl) if defined?(RtMl)
+  end
+
   def test_main_window_shows_transcript_and_banner
     main = GUI::MainWindow.new
     text = main.editor.text
@@ -205,5 +226,26 @@ class GuiSmokeTest < Minitest::Test
     assert_equal File.join(@dir, 'changes.rb'), RubyTalk.save_changes
     assert File.file?(File.join(@dir, 'changes.rb'))
     assert_nil RubyTalk.save_changes
+  end
+end
+
+# The built-in `rubytalk --selftest` checks, run against the fake tk. This
+# verifies the self-test's own logic; the real run on actual Tk is up to the user.
+class SelfTestAgainstFakeTest < Minitest::Test
+  include RubyTalk
+
+  def test_selftest_passes_against_fake_tk
+    dir = Dir.mktmpdir('rubytalk-selftest-test')
+    RubyTalk.changes = ChangeSet.new(File.join(dir, 'changes.rb'))
+    RubyTalk.changes.autosave = true
+    main = GUI::MainWindow.new
+    failures = nil
+    out, = capture_io { failures = GUI::SelfTest.new(main).run }
+    assert_equal 0, failures, out
+    assert_match(/\d+ passed, 0 failed/, out)
+    assert_equal GUI::SelfTest::CHECKS.size, out.scan(/^  PASS/).size
+  ensure
+    FileUtils.remove_entry(dir) if dir
+    Object.send(:remove_const, :RtSelfTest) if defined?(RtSelfTest)
   end
 end

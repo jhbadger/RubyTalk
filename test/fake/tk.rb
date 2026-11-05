@@ -24,12 +24,38 @@ module FakeStrict
 end
 
 module Tk
+  TK_VERSION = '0.0-fake'
+
   class << self
+    # Understands just the raw calls RubyTalk makes: message boxes, winfo,
+    # `event generate`, listbox `size`, and the menu queries/invokes used by the
+    # self-test. Everything else is accepted and ignored.
     def tk_call(*args)
       FakeStrict.check(args)
-      case args.first
-      when 'tk_messageBox' then 'yes'
-      when 'winfo' then '0'
+      first = args.first.to_s
+      return 'yes' if first == 'tk_messageBox'
+      return '0' if first == 'winfo'
+      return generate_event(args) if first == 'event' && args[1] == 'generate'
+
+      widget = FakeWidget.find(first)
+      return widget_call(widget, args[1..]) if widget
+
+      ''
+    end
+
+    def generate_event(args)
+      widget = FakeWidget.find(args[2]) or raise "fake Tk: no widget #{args[2]}"
+      pattern = args[3].to_s.delete('<>')
+      widget.fire(pattern) if widget.bindings.key?(pattern)
+      ''
+    end
+
+    def widget_call(widget, rest)
+      case rest.first
+      when 'size' then widget.items.size.to_s
+      when 'cget' then widget.options.fetch(rest[1].delete_prefix('-').to_sym).path
+      when 'entrycget' then widget.entries.find { |_, o| o[:label] == rest[1] }[1][:menu].path
+      when 'invoke' then widget.invoke(rest[1]).to_s
       else ''
       end
     end
@@ -62,11 +88,17 @@ end
 
 class FakeWidget
   @@count = 0
+  @@registry = {}
   attr_reader :path, :options, :bindings, :children
+
+  def self.find(path)
+    @@registry[path]
+  end
 
   def initialize(parent = nil, options = nil, &_block)
     @@count += 1
     @path = ".w#{@@count}"
+    @@registry[@path] = self
     @parent = parent
     FakeStrict.check(options) if options.is_a?(Hash)
     @options = options.is_a?(Hash) ? options.dup : {}
@@ -176,6 +208,7 @@ class TkText < FakeWidget
     when 'insert linestart' then 0
     when 'insert lineend' then @content.lines.first.to_s.chomp.size
     when /\A(\d+)\.(\d+)\z/ then @content.lines[0...(Regexp.last_match(1).to_i - 1)].sum(&:size) + Regexp.last_match(2).to_i
+    when /\A(\d+)\.end\z/ then @content.lines[0...(Regexp.last_match(1).to_i - 1)].sum(&:size) + @content.lines[Regexp.last_match(1).to_i - 1].to_s.chomp.size
     when /\A(.+)\+(\d+)c\z/ then offset_for(Regexp.last_match(1)) + Regexp.last_match(2).to_i
     else raise "fake Tk: unsupported text index #{index.inspect}"
     end
@@ -200,11 +233,13 @@ class TkText < FakeWidget
     self
   end
 
-  def tag_add(tag, *)
+  def tag_add(tag, first = nil, last = nil, *)
+    @selection = @content[offset_for(first)...offset_for(last)] if tag == 'sel'
     self
   end
 
-  def tag_remove(*)
+  def tag_remove(tag, *)
+    @selection = nil if tag == 'sel'
     self
   end
 end

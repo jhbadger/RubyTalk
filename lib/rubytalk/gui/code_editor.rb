@@ -39,6 +39,9 @@ module RubyTalk
       def set_contents(string)
         @text.delete('1.0', 'end')
         @text.insert('1.0', string.to_s.dup)
+        # Tk leaves the cursor after inserted text; put it back at the start so
+        # "do it" with no selection uses the first line.
+        Tk.tk_call(@text.path, 'mark', 'set', 'insert', '1.0')
       end
 
       def focus
@@ -70,7 +73,25 @@ module RubyTalk
         Browser.open(target.is_a?(Module) ? target : target.class)
       end
 
+      # The selection (or the word at the cursor) taken as a method name, not evaluated.
+      def implementors_of_it
+        selector = selector_text
+        GUI.show_method_list(:implementors, selector) if selector
+      end
+
+      def senders_of_it
+        selector = selector_text
+        GUI.show_method_list(:senders, selector) if selector
+      end
+
       private
+
+      def selector_text
+        raw = selected_text.to_s.strip
+        raw = @text.get('insert wordstart', 'insert wordend').to_s.strip if raw.empty?
+        raw = raw.sub(/\A:/, '').sub(/\A[A-Z][\w:]*[#.](?=\S)/, '')
+        raw.empty? ? nil : raw
+      end
 
       def selected_text
         @text.get('sel.first', 'sel.last').to_s
@@ -107,7 +128,8 @@ module RubyTalk
 
       def command_keys
         @command_keys ||= {
-          'd' => :do_it, 'p' => :print_it, 'i' => :inspect_it, 'b' => :browse_it
+          'd' => :do_it, 'p' => :print_it, 'i' => :inspect_it, 'b' => :browse_it,
+          'm' => :implementors_of_it, 'n' => :senders_of_it
         }
       end
 
@@ -129,6 +151,8 @@ module RubyTalk
         GUI.add_item(@menu, 'Print it', "#{MOD_LABEL}-P") { print_it }
         GUI.add_item(@menu, 'Inspect it', "#{MOD_LABEL}-I") { inspect_it }
         GUI.add_item(@menu, 'Browse it', "#{MOD_LABEL}-B") { browse_it }
+        GUI.add_item(@menu, 'Implementors of it', "#{MOD_LABEL}-M") { implementors_of_it }
+        GUI.add_item(@menu, 'Senders of it', "#{MOD_LABEL}-N") { senders_of_it }
         if can_accept?
           @menu.add('separator')
           GUI.add_item(@menu, 'Accept', "#{MOD_LABEL}-S") { accept }

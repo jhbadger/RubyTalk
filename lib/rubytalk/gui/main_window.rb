@@ -10,6 +10,7 @@ module RubyTalk
       def initialize
         @root = TkRoot.new
         GUI.window_title(@root, 'RubyTalk Transcript')
+        GUI.place(@root, x: 20, y: 30)
         scope = Evaluator.new_binding
         @editor = CodeEditor.new(@root, width: 90, height: 28, wrap: 'word',
                                         evaluator: ->(source) { Evaluator.evaluate(source, scope, file: 'transcript') })

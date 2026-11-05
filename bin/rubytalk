@@ -2,7 +2,16 @@
 # frozen_string_literal: true
 
 # Start RubyTalk in the current directory. If ./changes.rb exists it is loaded
-# into the environment; changes made in the browser are saved back on exit.
+# into the environment; changes made in the browser are saved as you go and
+# again on exit. The Transcript, a System Browser and a Workspace open at start.
+#
+#   rubytalk              start
+#   rubytalk --selftest   exercise the windows with real Tk in a temp directory, then exit
+if ARGV.include?('--help') || ARGV.include?('-h')
+  puts "usage: rubytalk [--selftest]\n  Run from the directory containing (or to contain) changes.rb."
+  exit
+end
+
 require_relative '../lib/rubytalk'
 
-RubyTalk.run(dir: Dir.pwd)
+RubyTalk.run(dir: Dir.pwd, selftest: ARGV.include?('--selftest'))

@@ -146,5 +146,36 @@ module RubyTalk
 
       text.each_line.map { |l| l.strip.empty? ? l : l[margin..] }.join
     end
+    # --- Finding uses of a selector ------------------------------------------
+
+    # Does +text+ call/mention the method name +selector+? Token-based (Ripper's
+    # lexer), so comments and string contents do not count and `def selector`
+    # (a definition, not a use) is skipped. Symbols (`send(:name)`, `&:name`)
+    # count as uses. Approximate by nature: a local variable with the same name
+    # also matches, and bracket selectors ([] and []=) are not searched.
+    def mentions?(text, selector)
+      name = selector.to_s
+      name = name.chomp('=') unless name.match?(/\A[=!<>]=?\z|\A\[\]=?\z/) || name == '==='
+      return false if name.empty? || name.start_with?('[')
+
+      tokens = Ripper.lex(text).reject { |(_pos, type, _tok, _state)| %i[on_sp on_ignored_nl on_comment].include?(type) }
+      tokens.each_with_index.any? do |(_pos, type, token, _state), index|
+        next false unless token == name && %i[on_ident on_const on_op on_kw].include?(type)
+
+        !definition_name?(tokens, index)
+      end
+    end
+
+    # True when the token at +index+ is the name in `def name` / `def self.name`.
+    def definition_name?(tokens, index)
+      before = ->(offset) { index - offset >= 0 ? tokens[index - offset] : nil }
+      return true if before.call(1)&.then { |t| t[1] == :on_kw && t[2] == 'def' }
+
+      period = before.call(1)
+      receiver = before.call(2)
+      keyword = before.call(3)
+      period && period[1] == :on_period && receiver && receiver[1] == :on_kw &&
+        receiver[2] == 'self' && keyword && keyword[1] == :on_kw && keyword[2] == 'def'
+    end
   end
 end

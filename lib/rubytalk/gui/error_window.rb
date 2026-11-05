@@ -11,6 +11,7 @@ module RubyTalk
         @window = TkToplevel.new
         first_line = error.message.to_s.lines.first.to_s.strip
         GUI.window_title(@window, "#{error.class}: #{first_line}"[0, 100])
+        GUI.place(@window)
 
         TkLabel.new(@window, text: "#{error.class}: #{first_line}", anchor: 'w', justify: 'left',
                              wraplength: 640, foreground: 'red').pack(side: 'top', fill: 'x', padx: 8, pady: 6)

@@ -16,11 +16,12 @@ module RubyTalk
         TEXT
       end
 
-      attr_reader :editor
+      attr_reader :editor, :window
 
       def initialize(text: nil, title: 'Workspace')
         @window = TkToplevel.new
         GUI.window_title(@window, title)
+        GUI.place(@window)
         scope = Evaluator.new_binding
         @editor = CodeEditor.new(@window, width: 80, height: 20,
                                           evaluator: ->(source) { Evaluator.evaluate(source, scope, file: 'workspace') })
