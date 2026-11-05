@@ -74,10 +74,15 @@ module RubyTalk
         text_changed
       end
 
-      # After any change to the text: recolour it and re-mark find matches.
+      # After any change to the text: recolour it, re-mark find matches, and (in code panes)
+      # line up a just-typed `end` / `else` / `}` and mark the bracket next to the cursor.
       def text_changed
         rehighlight
         @find_bar&.refresh_if_visible
+        return unless @smart
+
+        dedent_current_line
+        mark_brackets
       end
 
       # Switch Ruby colouring off (e.g. while showing a diff) or back on.
@@ -211,6 +216,76 @@ module RubyTalk
         # Our tags are newer than the selection tag, so put the selection back on top.
         Tk.tk_call(@text.path, 'tag', 'raise', 'sel')
         @text.bind('ButtonRelease-2') { GUI.safely { text_changed } } # middle-click paste
+        setup_smart_editing
+      end
+
+      # Code panes: Return keeps (and adds to) the indentation, Tab inserts two spaces, a typed
+      # `end` / `else` / `}` lines up with what it closes, and the bracket next to the cursor is marked
+      # together with its partner. See Indenter and BracketMatcher.
+      def setup_smart_editing
+        @smart = true
+        palette = Highlighter::MARKS.fetch(@palette_name)
+        Tk.tk_call(@text.path, 'tag', 'configure', 'rt_bracket', '-background', palette.fetch(:bracket).dup)
+        Tk.tk_call(@text.path, 'tag', 'raise', 'sel')
+        %w[Return KP_Enter].each do |key|
+          @text.bind(key) do
+            GUI.safely { auto_indent }
+            Tk.callback_break
+          end
+        end
+        @text.bind('Tab') do
+          GUI.safely { insert_step }
+          Tk.callback_break
+        end
+        @text.bind('ButtonRelease-1') { GUI.safely { mark_brackets } }
+      end
+
+      def delete_selection
+        @text.delete('sel.first', 'sel.last')
+      rescue StandardError
+        nil # nothing selected
+      end
+
+      # Return: replace any selection, then start the new line at the indentation the old one calls for.
+      def auto_indent
+        delete_selection
+        before = @text.get('insert linestart', 'insert').to_s
+        Tk.tk_call(@text.path, 'insert', 'insert', "\n#{Indenter.next_indent(before)}")
+        Tk.tk_call(@text.path, 'see', 'insert')
+        text_changed
+      end
+
+      def insert_step
+        delete_selection
+        Tk.tk_call(@text.path, 'insert', 'insert', Indenter::STEP.dup)
+        text_changed
+      end
+
+      # Only while typing at the end of a line that starts with end/else/when/}...
+      def dedent_current_line
+        index = @text.index('insert').to_s
+        return unless index == @text.index('insert lineend').to_s
+
+        number = index.split('.').first.to_i
+        line = @text.get("#{number}.0", "#{number}.end").to_s
+        return unless line.strip.match?(Indenter::DEDENT_START)
+
+        replacement = Indenter.dedented(@text.get('1.0', "#{number}.0").to_s, line) or return
+        old = Indenter.leading_whitespace(line).size
+        @text.delete("#{number}.0", "#{number}.#{old}")
+        @text.insert("#{number}.0", Indenter.leading_whitespace(replacement).dup)
+        rehighlight
+      end
+
+      def mark_brackets
+        Tk.tk_call(@text.path, 'tag', 'remove', 'rt_bracket', '1.0', 'end')
+        return unless @text.get('insert - 1 chars', 'insert + 1 chars').to_s.match?(/[(\[{)\]}]/)
+
+        text = contents
+        cursor = Tk.tk_call(@text.path, 'count', '-chars', '1.0', 'insert').to_i
+        match = BracketMatcher.match_near(text, cursor) or return
+        index = Finder.indexer(text)
+        Tk.tk_call(@text.path, 'tag', 'add', 'rt_bracket', *match.flat_map { |offset| [index.call(offset), index.call(offset + 1)] })
       end
 
       # Pick the palette from the actual background colour (light or dark appearance).

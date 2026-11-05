@@ -118,6 +118,7 @@ module Tk
     def widget_call(widget, rest)
       case rest.first
       when 'size' then widget.items.size.to_s
+      when 'insert' then widget.insert(rest[1], rest[2]) # text insert index chars
       when 'count' then widget.offset_for(rest.last).to_s # text -chars first last
       when 'index' then widget.index(rest[1]) # text index
       when 'mark'
@@ -323,12 +324,10 @@ class TkText < FakeWidget
   end
 
   def get(first, last = nil)
-    case [first, last]
-    when ['1.0', 'end-1c'] then @content.dup
-    when ['sel.first', 'sel.last'] then @selection || raise('text doesn\'t contain any characters tagged with "sel"')
-    when ['insert linestart', 'insert lineend'] then @content.lines.first.to_s.chomp
-    else @content.dup
-    end
+    return @content.dup if [first, last] == ['1.0', 'end-1c']
+
+    start = offset_for(first)
+    @content[start...(last ? offset_for(last) : start + 1)].to_s
   end
 
   # Like real Tk, asking for sel.first/sel.last with nothing selected is an error.
@@ -339,15 +338,16 @@ class TkText < FakeWidget
   # Character offset for the index forms RubyTalk uses ("insert" is taken to be on line 1).
   def offset_for(index)
     case index.to_s
-    when 'end' then @content.size
+    when 'end', 'end-1c', 'end - 1 chars' then @content.size # real Tk keeps a hidden final newline, so end-1c is the true end
     when 'insert' then @insert_offset || 0
     when 'sel.first' then selection_range!.first
     when 'sel.last' then selection_range!.last
-    when 'insert linestart' then 0
-    when 'insert lineend' then @content.lines.first.to_s.chomp.size
+    when 'insert linestart' then line_start((@insert_offset || 0))
+    when 'insert lineend' then line_end((@insert_offset || 0))
     when /\A(\d+)\.(\d+)\z/ then @content.lines[0...(Regexp.last_match(1).to_i - 1)].sum(&:size) + Regexp.last_match(2).to_i
     when /\A(\d+)\.end\z/ then @content.lines[0...(Regexp.last_match(1).to_i - 1)].sum(&:size) + @content.lines[Regexp.last_match(1).to_i - 1].to_s.chomp.size
-    when /\A(.+)\+(\d+)c\z/ then offset_for(Regexp.last_match(1)) + Regexp.last_match(2).to_i
+    when /\A(.+?)\s*\+\s*(\d+)\s*(?:c|chars)\z/ then [offset_for(Regexp.last_match(1)) + Regexp.last_match(2).to_i, @content.size].min
+    when /\A(.+?)\s*-\s*(\d+)\s*(?:c|chars)\z/ then [offset_for(Regexp.last_match(1)) - Regexp.last_match(2).to_i, 0].max
     else raise "fake Tk: unsupported text index #{index.inspect}"
     end
   end
@@ -362,19 +362,33 @@ class TkText < FakeWidget
   def insert(index, string, *_tags)
     FakeStrict.main_thread!('text insert')
     FakeStrict.check(string)
-    @content.insert(offset_for(index), string)
+    offset = offset_for(index)
+    @content.insert(offset, string)
+    # Like a real text widget, the cursor mark moves along when text goes in at or before it.
+    @insert_offset = (@insert_offset || 0) + string.size if @insert_offset && offset <= @insert_offset
     self
   end
 
+  def line_start(offset)
+    offset.zero? ? 0 : (@content.rindex("\n", offset - 1) || -1) + 1
+  end
+
+  def line_end(offset)
+    @content.index("\n", offset) || @content.size
+  end
+
   def delete(first = '1.0', last = nil)
-    if last.nil?
-      @content.slice!(offset_for(first), 1)
-    elsif first == '1.0' && last == 'end'
+    if first == '1.0' && last == 'end'
       @content = +''
       @selection = nil
       @selection_range = nil
+      @insert_offset = 0 if @insert_offset
     else
-      @content.slice!(offset_for(first)...offset_for(last))
+      from = offset_for(first)
+      to = last ? offset_for(last) : from + 1
+      @content.slice!(from...to)
+      # Marks inside or after the deleted text move back with it.
+      @insert_offset = [@insert_offset - (to - from), from].max if @insert_offset && @insert_offset > from
     end
     self
   end

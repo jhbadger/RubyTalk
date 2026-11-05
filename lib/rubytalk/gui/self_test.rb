@@ -21,6 +21,7 @@ module RubyTalk
         implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
         interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
         versions_window hierarchy_browser debugger class_comment test_runner find_and_replace
+        auto_indent_and_brackets
       ].freeze
 
       def initialize(main)
@@ -433,6 +434,36 @@ module RubyTalk
         assert_equal "baz é baz\nbaz", editor.contents
         generate(bar.find_entry, '<Escape>')
         assert(!bar.visible?, 'Escape did not close the bar')
+      end
+
+      # Return keeps the indentation, Tab inserts two spaces, a typed `end` lines up with its `def`, and
+      # the bracket next to the cursor is marked: real key events on a real text widget.
+      def check_auto_indent_and_brackets
+        editor = Workspace.new(text: 'x').editor
+        path = editor.text.path
+        cursor_at = ->(index) { Tk.tk_call(path, 'mark', 'set', 'insert', index) }
+
+        editor.set_contents('def foo')
+        cursor_at.call('end-1c')
+        generate(editor.text, '<Return>')
+        assert_equal "def foo\n  ", editor.contents
+
+        editor.set_contents('x')
+        cursor_at.call('end-1c')
+        generate(editor.text, '<Tab>')
+        assert_equal 'x  ', editor.contents
+
+        editor.set_contents("def foo\n  if x\n    a\n    end")
+        cursor_at.call('end-1c')
+        generate(editor.text, '<KeyRelease>')
+        assert_equal "def foo\n  if x\n    a\n  end", editor.contents
+
+        editor.set_contents('foo(a)')
+        cursor_at.call('1.6')
+        generate(editor.text, '<KeyRelease>')
+        tags_at = ->(index) { Tk.tk_call(path, 'tag', 'names', index).to_s.split }
+        assert(tags_at.call('1.3').include?('rt_bracket'), "the opening bracket is not marked: #{tags_at.call('1.3').inspect}")
+        assert(tags_at.call('1.5').include?('rt_bracket'), 'the closing bracket is not marked')
       end
 
       def cleanup

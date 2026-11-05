@@ -172,6 +172,17 @@ just finds one); **Replace All** does every match as a single undo step. **Escap
 are counted in characters, so text with accents or emoji is marked correctly. At most 1000 matches are
 coloured, though all are counted and replaced.
 
+**Auto-indent and bracket matching** (code panes: Workspace, Browser, Method List, Versions, Debugger,
+Inspector; not the Transcript). **Return** starts the next line at the indentation the last one calls for: the
+same, plus two spaces after `def`, `class`, `module`, `if`/`unless`/`while`/`until`/`case`/`begin`/`for`,
+`do`, an open `{` `(` `[`, or an `else`/`elsif`/`when`/`in`/`rescue`/`ensure` clause (a one-line
+`def a; end`, an endless `def a = 1`, a modifier `puts 1 if x` and keywords inside strings and comments do not
+count). **Tab** inserts two spaces. Typing `end`, `else`, `elsif`, `when`, `in`, `rescue`, `ensure` or a closing
+`}` `]` `)` at the start of a line moves it back to line up with what it closes, but only when it sits at the
+indentation auto-indent gave it, so existing code you click through is never rewritten. The bracket next to
+the cursor is highlighted together with its partner (brackets inside strings, comments, symbols and regexps
+do not count). It is a heuristic built on Ruby's lexer, not a parser: it favours predictable behaviour.
+
 **Versions.** Accept no longer loses the old definition. Right-click a method (in the Browser or a
 Method List) > **Versions...** to see, newest first: the current definition, every earlier version
 kept in `changes.history`, and the **original library method** if RubyTalk has overridden or removed
@@ -239,6 +250,8 @@ lib/rubytalk/diff.rb         line diff for the Versions window
 lib/rubytalk/stack.rb        what the debugger shows: frames, source, variables, method to edit
 lib/rubytalk/test_runner.rb  runs Minitest classes and reports plain outcomes
 lib/rubytalk/finder.rb       text search and replacement behind Find (no GUI)
+lib/rubytalk/indenter.rb     auto-indent rules (no GUI)
+lib/rubytalk/bracket_matcher.rb  matching brackets via the lexer (no GUI)
 lib/rubytalk/highlighter.rb  syntax highlighting: Ripper tokens to coloured spans (no GUI)
 lib/rubytalk/preferences.rb  remembers the last folder chosen
 lib/rubytalk/icon.rb         the icon, drawn in code; PNG and .icns writers

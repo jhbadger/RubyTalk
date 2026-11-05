@@ -131,6 +131,107 @@ class GuiSmokeTest < Minitest::Test
     Tk.rgb_answer = nil
   end
 
+  # --- auto-indent and bracket matching -----------------------------------------
+
+  # A code pane with the cursor at +offset+ (default: the very end).
+  def code_pane(text, offset = nil)
+    editor = GUI::Workspace.new(text: text).editor
+    editor.text.insert_offset = offset || text.size
+    editor
+  end
+
+  def test_return_keeps_and_adds_indentation
+    {
+      'def foo' => "def foo\n  ",
+      '  if x' => "  if x\n    ",
+      '  a = 1' => "  a = 1\n  ",
+      'items.each do |x|' => "items.each do |x|\n  ",
+      '  end' => "  end\n  "
+    }.each do |text, expected|
+      editor = code_pane(text)
+      assert_equal :break, editor.text.fire('Return'), 'the default newline is suppressed'
+      assert_equal expected, editor.contents, text.inspect
+      assert_equal expected.size, editor.text.insert_offset, 'the cursor is on the new line, after the indentation'
+    end
+  end
+
+  def test_return_in_the_middle_of_a_line_and_over_a_selection
+    editor = code_pane('foo(a)', 4)
+    editor.text.fire('Return')
+    assert_equal "foo(\n  a)", editor.contents
+
+    editor = code_pane('abc def', 3)
+    editor.text.select_text('abc')
+    editor.text.fire('Return')
+    assert_equal "\n def", editor.contents, 'a selection is replaced, as Return normally does'
+  end
+
+  def test_tab_inserts_two_spaces
+    editor = code_pane('x')
+    assert_equal :break, editor.text.fire('Tab')
+    assert_equal 'x  ', editor.contents
+  end
+
+  def test_typing_end_else_or_a_closer_lines_up_with_its_opener
+    editor = code_pane("def foo\n  if x\n    a\n    end")
+    editor.text.fire('KeyRelease')
+    assert_equal "def foo\n  if x\n    a\n  end", editor.contents
+    assert_equal editor.contents.size, editor.text.insert_offset, 'the cursor stays at the end of the line'
+
+    editor = code_pane("def foo\n  if x\n    a\n    else")
+    editor.text.fire('KeyRelease')
+    assert_equal "def foo\n  if x\n    a\n  else", editor.contents
+
+    editor = code_pane("h = {\n  a: 1\n  }")
+    editor.text.fire('KeyRelease')
+    assert_equal "h = {\n  a: 1\n}", editor.contents
+  end
+
+  def test_dedent_leaves_existing_code_and_other_lines_alone
+    [
+      ["def foo\n  a\n      end", nil],            # indented by hand: not the auto-indent position
+      ["def foo\n  a\n  endless = 1", nil],        # not a closer
+      ["def foo\n  a\n  when: 1", nil]
+    ].each do |text, _|
+      editor = code_pane(text)
+      editor.text.fire('KeyRelease')
+      assert_equal text, editor.contents, text.inspect
+    end
+    editor = code_pane("def foo\n  if x\n    a\n    end\nmore", 30) # cursor not at the end of that line
+    before = editor.contents
+    editor.text.fire('KeyRelease')
+    assert_equal before, editor.contents
+  end
+
+  def test_the_bracket_next_to_the_cursor_is_marked_with_its_partner
+    editor = code_pane('foo(a, [1])', 11)
+    editor.text.fire('KeyRelease')
+    names = ->(index) { editor.text.tag_command(['names', index]).split }
+    assert_includes names.call('1.3'), 'rt_bracket'
+    assert_includes names.call('1.10'), 'rt_bracket'
+    refute_includes names.call('1.4'), 'rt_bracket'
+
+    editor.text.insert_offset = 5 # not next to a bracket
+    editor.text.fire('KeyRelease')
+    assert_nil editor.text.tag_store.fetch('rt_bracket', nil), 'the marks go when the cursor moves away'
+
+    editor.text.insert_offset = 4 # just after the opener, by clicking
+    editor.text.fire('ButtonRelease-1')
+    assert_includes names.call('1.10'), 'rt_bracket'
+
+    unbalanced = code_pane('foo(a', 4)
+    unbalanced.text.fire('KeyRelease')
+    assert_nil unbalanced.text.tag_store.fetch('rt_bracket', nil), 'no partner, nothing to mark'
+  end
+
+  def test_the_transcript_and_find_entries_have_no_smart_editing
+    main = GUI::MainWindow.new
+    refute main.editor.text.bindings.key?('Return'), 'Return in the Transcript is untouched'
+    refute main.editor.text.bindings.key?('Tab')
+    main.editor.show_find
+    refute main.editor.find_bar.find_entry.bindings.key?('Tab')
+  end
+
   # --- find and replace ------------------------------------------------------
 
   def find_fixture(text)

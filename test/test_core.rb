@@ -880,6 +880,72 @@ class CoreTest < Minitest::Test
     assert_equal "(too large to compare)\n", diff.unified(big, big.reverse)
   end
 
+  # --- Auto-indent and bracket matching ---------------------------------------
+
+  def indenter
+    RubyTalk::Indenter
+  end
+
+  def test_next_indent_after_lines_that_open_a_block
+    {
+      'def foo' => '  ', '  if x' => '    ', 'foo do |x|' => '  ', 'items.each { |x|' => '  ', 'x = [' => '  ',
+      'class << self' => '  ', 'x = if cond' => '  ', 'end.map do |y|' => '  ', 'rescue Foo => e' => '  ',
+      'def foo # comment' => '  ', 'while x do' => '  ', 'begin' => '  ', 'case x' => '  ', 'loop do' => '  ',
+      'x = ->(a) {' => '  ', 'def foo=(v)' => '  ', 'def ==(o)' => '  ', 'value = begin' => '  ', 'module Foo' => '  ',
+      'foo(a,' => '  ', 'h = {' => '  ', 'private def foo' => '  ', "\tdef foo" => "\t  ", '  else' => '    ',
+      '  when 1' => '    ', 'ensure' => '  ', 'elsif y' => '  '
+    }.each { |line, expected| assert_equal expected, indenter.next_indent(line), line.inspect }
+  end
+
+  def test_next_indent_after_lines_that_do_not
+    ['x = [1, 2]', 'def a; end', 'def a = 1', 'def a(x) = x * 2', 'puts 1 if x', '  return if x', 'end', '} ',
+     'puts "("', '# def foo', '', '    end', '  x = 1'].each do |line|
+      assert_equal indenter.leading_whitespace(line), indenter.next_indent(line), line.inspect
+    end
+  end
+
+  def test_closers_typed_on_their_own_line_up_with_their_opener
+    assert_equal '  end', indenter.dedented("def foo\n  if x\n    a\n", '    end')
+    assert_equal '  else', indenter.dedented("def foo\n  if x\n    a\n", '    else')
+    assert_equal '}', indenter.dedented("h = {\n  a: 1\n", '  }')
+    assert_equal '  when 2', indenter.dedented("case x\n  when 1\n    a\n", '    when 2')
+    assert_equal 'end', indenter.dedented("def foo\n  a\n", '  end')
+    assert_equal '  end', indenter.dedented("class A\n  def foo\n    a\n\n", '    end'), 'blank lines above are skipped'
+  end
+
+  def test_dedent_leaves_other_text_and_hand_indented_code_alone
+    assert_nil indenter.dedented("def foo\n  a\n", 'end'), 'not at the auto-indented position'
+    assert_nil indenter.dedented("def foo\n  a\n", '  else_x = 1')
+    assert_nil indenter.dedented("def foo\n  a\n", '  when: 1')
+    assert_nil indenter.dedented("def foo\n  a\n", '  endless = 1')
+    assert_nil indenter.dedented("def foo\n  a\n", '  b')
+    assert_nil indenter.dedented('', 'end')
+    assert_nil indenter.dedented("x\n", 'end'), 'nothing to line up with'
+  end
+
+  def test_bracket_pairs
+    pairs = RubyTalk::BracketMatcher.pairs('foo(a, [1, {b: 2}])')
+    assert_equal({ 3 => 18, 18 => 3, 7 => 17, 17 => 7, 11 => 16, 16 => 11 }, pairs)
+    assert_empty RubyTalk::BracketMatcher.pairs("\"(\" # ) (\n:'[' "), 'strings, comments and symbols do not count'
+    assert_empty RubyTalk::BracketMatcher.pairs('a = %w[x y] =~ /[a-z]/'), 'nor word lists or regexps'
+    assert_equal({ 1 => 3, 3 => 1 }, RubyTalk::BracketMatcher.pairs('é(x)'), 'character offsets')
+    assert_equal({ 2 => 4, 4 => 2 }, RubyTalk::BracketMatcher.pairs('"#{x}"'), 'the braces of interpolation')
+    assert_equal({ 2 => 6, 6 => 2 }, RubyTalk::BracketMatcher.pairs('->{ 1 }'))
+    assert_empty RubyTalk::BracketMatcher.pairs('foo(a')
+    assert_empty RubyTalk::BracketMatcher.pairs('')
+    assert_equal({ 0 => 1, 1 => 0, 3 => 4, 4 => 3 }, RubyTalk::BracketMatcher.pairs("()\n()".sub("\n", ' ')))
+  end
+
+  def test_bracket_match_near_the_cursor
+    match = RubyTalk::BracketMatcher.method(:match_near)
+    assert_equal [5, 3], match.call('foo(a)', 6), 'just after the closer'
+    assert_equal [3, 5], match.call('foo(a)', 4), 'just after the opener'
+    assert_equal [3, 5], match.call('foo(a)', 3), 'just before the opener'
+    assert_nil match.call('foo(a', 4), 'no partner'
+    assert_nil match.call('foo(a)', 0), 'not next to a bracket'
+    assert_nil match.call('', 0)
+  end
+
   # --- Find and replace ----------------------------------------------------
 
   def finder
