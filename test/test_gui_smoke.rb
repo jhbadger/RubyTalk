@@ -131,6 +131,98 @@ class GuiSmokeTest < Minitest::Test
     Tk.rgb_answer = nil
   end
 
+  # --- debugger ----------------------------------------------------------
+
+  def debugger_fixture
+    changes = RubyTalk.changes
+    Compiler.accept("class RtDbgW\nend\n", changes: changes)
+    Compiler.accept("def explode(n)\n  local = n * 2\n  raise 'boom'\nend\n", klass: RtDbgW, changes: changes)
+    GUI::Workspace.new(text: 'RtDbgW.new.explode(21)').editor.do_it
+    GUI.windows.last
+  end
+
+  def test_debugger_shows_stack_source_locals_and_evaluates_in_the_frame
+    debugger = debugger_fixture
+    assert_instance_of GUI::Debugger, debugger
+    assert_match(/rubytalk:RtDbgW:3/, ivar(debugger, :@stack).box.items.first)
+    assert_equal "def explode(n)\n  local = n * 2\n  raise 'boom'\nend\n", debugger.source.contents
+    assert_includes debugger.source.text.tag_command(['names', '3.0']).split, 'rt_current_line', 'the failing line is marked'
+    refute_includes debugger.source.text.tag_command(['names', '1.0']).split, 'rt_current_line'
+
+    rows = ivar(debugger, :@variables).box.items
+    assert(rows.any? { |row| row.start_with?('local = 42') }, rows.inspect)
+    assert(rows.any? { |row| row.start_with?('n = 21') })
+
+    debugger.console.set_contents('local + 1')
+    debugger.console.print_it
+    assert_equal 'local + 1 43', debugger.console.contents, 'evaluated in the frame that raised'
+  ensure
+    Object.send(:remove_const, :RtDbgW) if defined?(RtDbgW)
+  end
+
+  def test_debugger_outer_frames_have_source_but_no_locals
+    debugger = debugger_fixture
+    stack = ivar(debugger, :@stack)
+    outer = stack.box.items.index { |item| item.include?('workspace:1') }
+    refute_nil outer
+    stack.box.click(outer)
+    assert_equal "RtDbgW.new.explode(21)", debugger.source.contents
+    assert_empty ivar(debugger, :@variables).box.items
+    assert_match(/only kept for the frame that raised/, ivar(debugger, :@status).options[:text])
+  ensure
+    Object.send(:remove_const, :RtDbgW) if defined?(RtDbgW)
+  end
+
+  def test_debugger_edit_method_opens_the_browser_on_it
+    debugger = debugger_fixture
+    debugger.send(:edit_method)
+    browser = GUI.windows.last
+    assert_instance_of GUI::Browser, browser
+    assert_equal "def explode(n)\n  local = n * 2\n  raise 'boom'\nend\n", browser.code.contents
+  ensure
+    Object.send(:remove_const, :RtDbgW) if defined?(RtDbgW)
+  end
+
+  def test_debugger_inspects_a_variable
+    debugger = debugger_fixture
+    variables = ivar(debugger, :@variables)
+    index = variables.box.items.index { |row| row.start_with?('local = ') }
+    variables.box.click(index)
+    debugger.send(:inspect_variable)
+    assert_instance_of GUI::Inspector, GUI.windows.last
+    assert_equal 42, ivar(GUI.windows.last, :@object)
+  ensure
+    Object.send(:remove_const, :RtDbgW) if defined?(RtDbgW)
+  end
+
+  def test_debugger_run_again_after_a_fix
+    $rt_flag = false
+    editor = GUI::Workspace.new(text: "$rt_flag = !$rt_flag; raise 'first time' if $rt_flag; :fine").editor
+    editor.do_it
+    debugger = GUI.windows.last
+    assert_instance_of GUI::Debugger, debugger
+    debugger.send(:run_again)
+    assert_match(/Run again: :fine/, Transcript.buffer)
+  end
+
+  def test_debugger_run_again_that_fails_again_opens_a_new_debugger
+    $rt_runs = 0
+    GUI::Workspace.new(text: "$rt_runs += 1; raise 'still broken'").editor.do_it
+    first = GUI.windows.last
+    first.send(:run_again)
+    assert_equal 2, $rt_runs
+    assert_instance_of GUI::Debugger, GUI.windows.last
+    refute_same first, GUI.windows.last
+  end
+
+  def test_debugger_copes_with_an_error_that_has_no_stack
+    debugger = GUI::Debugger.new(RuntimeError.new('no backtrace'))
+    assert_match(/No stack is available/, debugger.source.contents)
+    debugger.send(:edit_method) # nothing to edit: must not raise
+    debugger.send(:run_again)
+    assert_equal 'This cannot be run again.', ivar(debugger, :@status).options[:text]
+  end
+
   # --- hierarchy ---------------------------------------------------------
 
   def test_hierarchy_browser_lists_the_hierarchy_and_works_like_a_browser
@@ -451,7 +543,7 @@ class GuiSmokeTest < Minitest::Test
     before = GUI.windows.size
     ws.editor.do_it
     assert_operator GUI.windows.size, :>, before
-    assert_instance_of GUI::ErrorWindow, GUI.windows.last
+    assert_instance_of GUI::Debugger, GUI.windows.last
     assert_match(/ZeroDivisionError/, Transcript.buffer)
   end
 

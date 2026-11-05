@@ -13,8 +13,23 @@ module RubyTalk
   #   driver.wait(worker)   # returns once the worker thread has finished
   #
   # With no driver (scripts, tests) code just runs on the calling thread.
+  #
+  # For the debugger, the binding at the point of every `raise` is remembered while
+  # code runs. A Binding keeps its local variables alive after the stack unwinds, so
+  # when a do it ends in an error, Result#failure can still show the locals of the
+  # frame that raised, evaluate expressions there, and re-run the do it.
   module Evaluator
-    Result = Struct.new(:ok, :value, :error)
+    # failure is nil unless the code raised: see Failure.
+    Result = Struct.new(:ok, :value, :error, :failure)
+
+    # binding: where the error was raised (nil if unknown); source: the text that was
+    # evaluated; rerun: a callable that evaluates it again and returns a new Result.
+    Failure = Struct.new(:binding, :source, :rerun)
+
+    RaiseRecord = Struct.new(:exception, :binding)
+
+    # How many recent raises to remember (most code rescues many exceptions internally).
+    MAX_RECORDS = 100
 
     # Exceptions we recover from when running user code or replaying changes.
     # (Deliberately excludes NoMemoryError, SystemExit-as-quit and the like.)
@@ -51,12 +66,16 @@ module RubyTalk
 
     # Evaluate +source+ in a Binding (workspace temporaries).
     def evaluate(source, binding, file: 'workspace', line: 1)
-      run { binding.eval(source, file, line) }
+      run(source: source, rerun: -> { evaluate(source, binding, file: file, line: line) }) do
+        binding.eval(source, file, line)
+      end
     end
 
     # Evaluate +source+ with +receiver+ as self (inspectors).
     def evaluate_in(source, receiver, file: 'inspector', line: 1)
-      run { receiver.instance_eval(source, file, line) }
+      run(source: source, rerun: -> { evaluate_in(source, receiver, file: file, line: line) }) do
+        receiver.instance_eval(source, file, line)
+      end
     end
 
     # Is a do it running on a worker thread right now?
@@ -80,26 +99,51 @@ module RubyTalk
       true
     end
 
-    def run(&block)
+    def run(source: nil, rerun: nil, &block)
+      records = []
       raise Busy, 'Something is already running: stop it first (Cmd-. or System > Interrupt).' if busy?
 
-      value = with_transcript_io { driver ? run_in_thread(&block) : block.call }
-      Result.new(true, value, nil)
+      value = with_transcript_io { driver ? run_in_thread(records, &block) : capturing(records, &block) }
+      Result.new(true, value, nil, nil)
     rescue SystemExit => e
       ::Transcript.show_cr('exit ignored: use System > Quit so changes are saved.')
-      Result.new(false, nil, e)
+      Result.new(false, nil, e, nil)
     rescue Interrupted => e
       ::Transcript.show_cr('Interrupted.')
-      Result.new(false, nil, e)
+      Result.new(false, nil, e, nil)
     rescue Exception => e # rubocop:disable Lint/RescueException -- user code may raise anything
       ::Transcript.show_cr(format_error(e))
-      Result.new(false, nil, e)
+      Result.new(false, nil, e, failure_for(e, records, source, rerun))
     end
 
-    def run_in_thread(&block)
+    # Run the block remembering the binding at each raise, on the current thread.
+    def capturing(records)
+      trace = TracePoint.new(:raise) do |event|
+        exception = event.raised_exception
+        next if records.any? { |record| record.exception.equal?(exception) } # keep the first raise
+
+        records << RaiseRecord.new(exception, (event.binding rescue nil)) # rubocop:disable Style/RescueModifier
+        records.shift if records.size > MAX_RECORDS
+      end
+      begin
+        trace.enable(target_thread: Thread.current)
+      rescue ArgumentError
+        trace.enable # older Rubies: no per-thread targeting
+      end
+      yield
+    ensure
+      trace&.disable
+    end
+
+    def failure_for(error, records, source, rerun)
+      record = records.reverse.find { |candidate| candidate.exception.equal?(error) }
+      Failure.new(record&.binding, source, rerun)
+    end
+
+    def run_in_thread(records, &block)
       worker = Thread.new do
         Thread.current.report_on_exception = false
-        block.call
+        capturing(records, &block)
       end
       @current = worker
       @stopped_at = nil

@@ -24,6 +24,13 @@ module RubyTalk
               constant: '#d2a8ff', variable: '#f0883e', regexp: '#ff7b72', def_name: '#58a6ff' }
     }.freeze
 
+    # Background colours for marking things in the text: the line the debugger stopped on,
+    # find matches, a bracket's partner.
+    MARKS = {
+      light: { current_line: '#ffe9a8', find: '#fff3a0', bracket: '#c8e1ff' },
+      dark: { current_line: '#5a4b00', find: '#665c00', bracket: '#3b5070' }
+    }.freeze
+
     # Larger texts are left uncoloured rather than slowing typing down.
     MAX_SOURCE = 60_000
 

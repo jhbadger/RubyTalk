@@ -203,6 +203,163 @@ class CoreTest < Minitest::Test
     end
   end
 
+  # --- Debugger support: binding at the raise, frames, source, variables -------
+
+  def debug_fixture
+    accept("class RtDbg\nend\n")
+    accept("def explode(n)\n  local = n * 2\n  raise 'boom'\nend\n", klass: RtDbg)
+    accept("def build\n  tmp = 1\n  raise 'class side'\nend\n", klass: RtDbg, side: :class)
+  end
+
+  def run_it(source, binding = RubyTalk::Evaluator.new_binding)
+    RubyTalk::Evaluator.evaluate(source, binding)
+  end
+
+  def test_failure_keeps_the_locals_of_the_frame_that_raised
+    result = run_it("x = 5\ny = x * 2\nraise 'boom'")
+    refute result.ok
+    assert_equal 10, result.failure.binding.local_variable_get(:y)
+    assert_equal "x = 5\ny = x * 2\nraise 'boom'", result.failure.source
+    assert_nil run_it('1 + 1').failure, 'no failure when nothing went wrong'
+  end
+
+  def test_failure_in_a_method_has_that_methods_locals_and_receiver
+    debug_fixture
+    result = run_it('RtDbg.new.explode(21)')
+    binding = result.failure.binding
+    assert_equal 42, binding.local_variable_get(:local)
+    assert_equal 21, binding.local_variable_get(:n)
+    assert_instance_of RtDbg, binding.receiver
+    assert_equal 'rubytalk:RtDbg', binding.source_location[0]
+  ensure
+    drop_classes(:RtDbg)
+  end
+
+  def test_failure_from_a_c_method_still_has_a_binding
+    result = run_it("here = :marker\n1 / 0")
+    assert_kind_of ZeroDivisionError, result.error
+    assert_equal :marker, result.failure.binding.local_variable_get(:here)
+    assert_equal 'workspace', result.failure.binding.source_location[0]
+  end
+
+  def test_failure_belongs_to_the_exception_that_escaped_not_one_rescued_earlier
+    code = "begin; raise 'rescued'; rescue; end\nlocal = 1\n300.times { begin; raise 'n'; rescue; end }\nraise 'escaped'"
+    result = run_it(code)
+    assert_equal 'escaped', result.error.message
+    assert_equal 1, result.failure.binding.local_variable_get(:local)
+  end
+
+  def test_failure_works_on_a_worker_thread_too
+    with_driver(JoinDriver) do
+      result = run_it("seen = 9\nraise 'on a worker'")
+      assert_equal 9, result.failure.binding.local_variable_get(:seen)
+    end
+  end
+
+  def test_rerun_evaluates_the_same_source_again
+    $rt_runs = 0
+    binding = RubyTalk::Evaluator.new_binding
+    result = run_it("$rt_runs += 1\nraise 'again'", binding)
+    again = result.failure.rerun.call
+    assert_equal 2, $rt_runs
+    assert_equal 'again', again.error.message
+    assert_equal 3, again.failure.rerun.call.then { $rt_runs }
+  end
+
+  def test_an_interrupt_has_no_failure_to_debug
+    with_driver(StopDriver) do
+      assert_nil run_it('loop {}').failure
+    end
+  end
+
+  def test_stack_frames_hide_the_plumbing_and_carry_the_binding
+    debug_fixture
+    result = run_it('RtDbg.new.explode(21)')
+    frames = RubyTalk::Stack.frames(result.error, result.failure.binding)
+    assert_equal 'rubytalk:RtDbg', frames.first.path
+    assert_equal 3, frames.first.lineno
+    assert frames.first.binding
+    assert_includes frames.map(&:path), 'workspace'
+    refute(frames.any? { |frame| RubyTalk::Stack.internal?(frame.path) })
+    assert_nil frames.last.binding
+    assert_match(/rubytalk:RtDbg:3 in /, frames.first.to_s)
+  ensure
+    drop_classes(:RtDbg)
+  end
+
+  def test_stack_frames_from_a_plain_backtrace
+    error = RuntimeError.new('x')
+    error.set_backtrace(["a.rb:3:in `foo'", "b.rb:9:in `bar'"])
+    frames = RubyTalk::Stack.frames(error)
+    assert_equal [['a.rb', 3, 'foo'], ['b.rb', 9, 'bar']], frames.map { |f| [f.path, f.lineno, f.label] }
+  end
+
+  def test_stack_variables
+    debug_fixture
+    result = run_it('RtDbg.new.explode(21)')
+    rows = RubyTalk::Stack.variables(result.failure.binding)
+    assert_equal 'self', rows.first.first
+    assert_instance_of RtDbg, rows.first.last
+    assert_equal [['n', 21], ['local', 42]], rows.drop(1).first(2)
+    assert_empty RubyTalk::Stack.variables(nil)
+  ensure
+    drop_classes(:RtDbg)
+  end
+
+  def test_stack_source_views
+    debug_fixture
+    result = run_it("1\nRtDbg.new.explode(21)")
+    frames = RubyTalk::Stack.frames(result.error, result.failure.binding)
+
+    text, current, first = RubyTalk::Stack.source_view(frames.first, result.failure.source, @changes)
+    assert_equal "def explode(n)\n  local = n * 2\n  raise 'boom'\nend\n", text
+    assert_equal [3, 1], [current, first], 'the raise is on line 3 of the method source'
+
+    doit = frames.find { |frame| frame.path == 'workspace' }
+    text, current, = RubyTalk::Stack.source_view(doit, result.failure.source, @changes)
+    assert_equal "1\nRtDbg.new.explode(21)", text
+    assert_equal 2, current
+
+    missing = RubyTalk::Stack::Frame.new('/no/such/file.rb', 3, 'x')
+    text, current, = RubyTalk::Stack.source_view(missing, nil, @changes)
+    assert_match(/source not available/, text)
+    assert_nil current
+  ensure
+    drop_classes(:RtDbg)
+  end
+
+  def test_stack_source_view_of_a_real_file_shows_a_window_around_the_line
+    frame = RubyTalk::Stack::Frame.new(__FILE__, __LINE__ + 1, 'x')
+    marker = 'RT_MARKER_LINE_FOR_STACK_TEST'
+    text, current, first = RubyTalk::Stack.source_view(frame, nil, @changes)
+    assert_includes text.lines[current - 1], 'RT_MARKER_LINE_FOR_STACK_TEST'
+    assert_equal frame.lineno, first + current - 1
+    assert_operator text.lines.size, :<=, 81
+    refute_nil marker
+  end
+
+  def test_stack_method_targets
+    debug_fixture
+    instance = RubyTalk::Stack.frames(run_it('RtDbg.new.explode(1)').error).first
+    assert_equal [RtDbg, :instance, 'explode'], RubyTalk::Stack.method_target(instance, @changes)
+    klass_side = RubyTalk::Stack.frames(run_it('RtDbg.build').error).first
+    assert_equal [RtDbg, :class, 'build'], RubyTalk::Stack.method_target(klass_side, @changes)
+
+    frame = ->(label, binding = nil) { RubyTalk::Stack::Frame.new('x.rb', 1, label, binding) }
+    assert_equal [String, :instance, 'upcase'], RubyTalk::Stack.method_target(frame.call('block in String#upcase'), @changes)
+    assert_equal [Integer, :class, 'sqrt'], RubyTalk::Stack.method_target(frame.call('Integer.sqrt'), @changes)
+    assert_nil RubyTalk::Stack.method_target(frame.call('<main>'), @changes)
+    assert_nil RubyTalk::Stack.method_target(frame.call('NoSuchClassAnywhere#foo'), @changes)
+    assert_equal [String, :instance, 'foo'], RubyTalk::Stack.method_target(frame.call('foo', 'str'.instance_eval { binding }), @changes)
+  ensure
+    drop_classes(:RtDbg)
+  end
+
+  def test_stack_method_names
+    names = ['block (2 levels) in Foo#bar', 'Foo.baz', 'bar', '<main>', 'Foo#+', nil].map { |l| RubyTalk::Stack.method_name(l) }
+    assert_equal ['bar', 'baz', 'bar', nil, '+', nil], names
+  end
+
   # --- Source -----------------------------------------------------------
 
   def test_split_statements_and_describe

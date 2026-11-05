@@ -20,7 +20,7 @@ module RubyTalk
         browser_accept_by_key search_implementors_and_senders method_list_window
         implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
         interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
-        versions_window hierarchy_browser
+        versions_window hierarchy_browser debugger
       ].freeze
 
       def initialize(main)
@@ -163,7 +163,7 @@ module RubyTalk
         editor = Workspace.new(text: '1 / 0').editor
         before = GUI.windows.size
         editor.do_it
-        assert(GUI.windows.size > before && GUI.windows.last.is_a?(ErrorWindow), 'no error window opened')
+        assert(GUI.windows.size > before && GUI.windows.last.is_a?(Debugger), 'no debugger opened')
       end
 
       def check_inspector
@@ -358,6 +358,21 @@ module RubyTalk
         assert(list_size(classes) >= 3, "expected BasicObject, Object, RtSelfTest; got #{list_size(classes)} rows")
         assert_equal 'BasicObject', Tk.tk_call(classes.box.path, 'get', 0).to_s
         assert(browser.code.contents.start_with?('class RtSelfTest'), 'the class was not selected')
+      end
+
+      # An error opens the debugger with the locals of the frame that raised, and the console
+      # evaluates in that frame (a binding captured by TracePoint at the raise, kept alive
+      # after the stack unwound).
+      def check_debugger
+        Workspace.new(text: 'dbg_value = 41; raise "selftest debugger"').editor.do_it
+        debugger = GUI.windows.last
+        assert(debugger.is_a?(Debugger), 'no debugger opened')
+        variables = ivar(debugger, :@variables)
+        rows = Array.new(list_size(variables)) { |i| Tk.tk_call(variables.box.path, 'get', i).to_s }
+        assert(rows.any? { |row| row.start_with?('dbg_value = 41') }, "locals shown: #{rows.inspect}")
+        debugger.console.set_contents('dbg_value + 1')
+        debugger.console.print_it
+        assert_equal 'dbg_value + 1 42', debugger.console.contents
       end
 
       def cleanup

@@ -160,7 +160,7 @@ module RubyTalk
         end
 
         result = @evaluator.call(source)
-        GUI.notify_error(result.error) unless result.ok
+        GUI.notify_error(result.error, result.failure) unless result.ok
         [result, first, last]
       end
 

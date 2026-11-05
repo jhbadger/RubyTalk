@@ -133,7 +133,8 @@ module RubyTalk
       attr_reader :icon_image
 
       # Stagger new windows so they do not stack exactly on top of each other.
-      def place(window, x: nil, y: nil)
+      # +kind+ names the sort of window (:debugger, :browser ...); remembered layouts use it.
+      def place(window, x: nil, y: nil, kind: nil) # rubocop:disable Lint/UnusedMethodArgument
         unless x
           step = @cascade % 8
           @cascade += 1
@@ -225,10 +226,10 @@ module RubyTalk
         nil
       end
 
-      def notify_error(error)
+      def notify_error(error, failure = nil)
         return if error.is_a?(SystemExit) || error.is_a?(Evaluator::Interrupted)
 
-        ErrorWindow.new(error)
+        Debugger.new(error, failure)
       end
 
       def quit
@@ -348,7 +349,7 @@ end
 
 require_relative 'gui/selectable_list'
 require_relative 'gui/code_editor'
-require_relative 'gui/error_window'
+require_relative 'gui/debugger'
 require_relative 'gui/main_window'
 require_relative 'gui/workspace'
 require_relative 'gui/browser'

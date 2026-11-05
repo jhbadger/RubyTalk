@@ -131,6 +131,19 @@ right-click menu.
   computed name are invisible, methods built by `define_method` are found only if their
   source can be read, and `[]`/`[]=` are not searched.
 
+**Debugger.** When a do it raises an error, a Debugger window opens (instead of a plain backtrace):
+the stack on the top left, the code of the selected frame on the top right with its current line
+marked, `self` and the locals of the frame that raised on the bottom left (double-click one to
+inspect it), and a console on the bottom right that evaluates **in that frame** (select text, then
+Cmd-D / Cmd-P / Cmd-I), so `local + 1` or `self.class` answer about the moment of the error.
+**Edit Method** (or double-click a frame) opens the browser on the failing method so you can fix it
+and Accept; **Run Again** then evaluates the original do it again. It cannot resume where the error
+happened: the stack has already unwound, so "fix and re-run" replaces "fix and proceed".
+How it works: while code runs, a `TracePoint` records the binding at every `raise`; a Binding keeps its
+locals alive after the stack unwinds. **Limits:** only the frame that raised has locals (Ruby keeps no
+bindings for the others, which show source only); errors raised and rescued inside your code are
+recorded too (the last 100), which costs a little in code that raises very many exceptions.
+
 **Versions.** Accept no longer loses the old definition. Right-click a method (in the Browser or a
 Method List) > **Versions...** to see, newest first: the current definition, every earlier version
 kept in `changes.history`, and the **original library method** if RubyTalk has overridden or removed
@@ -195,13 +208,14 @@ lib/rubytalk/changes.rb      ChangeSet: parse, replay, write changes.rb
 lib/rubytalk/compiler.rb     Accept, replay, remove method/class
 lib/rubytalk/search.rb       implementors / senders
 lib/rubytalk/diff.rb         line diff for the Versions window
+lib/rubytalk/stack.rb        what the debugger shows: frames, source, variables, method to edit
 lib/rubytalk/highlighter.rb  syntax highlighting: Ripper tokens to coloured spans (no GUI)
 lib/rubytalk/preferences.rb  remembers the last folder chosen
 lib/rubytalk/icon.rb         the icon, drawn in code; PNG and .icns writers
 lib/rubytalk/app_bundle.rb   builds RubyTalk.app
 lib/rubytalk/cli.rb          command-line options
 lib/rubytalk/reflection.rb   categories, method lists, definition text (no GUI)
-lib/rubytalk/gui/*.rb        Tk windows (gui/self_test.rb is the --selftest; versions_window.rb the Versions window)
+lib/rubytalk/gui/*.rb        Tk windows (gui/self_test.rb is the --selftest; versions_window.rb the Versions window; debugger.rb the Debugger)
 test/test_core.rb            headless tests of everything above
 test/test_gui_smoke.rb       drives the windows against a recording stand-in for tk
 test/test_highlighter.rb      syntax highlighting (token classes, byte-to-character columns, bad input)
@@ -233,6 +247,9 @@ why the files under `gui/` do not use `# frozen_string_literal: true`. It also r
 5. Type in the filter box above the class list: the list narrows as you type.
 6. Syntax colours look right in your appearance (light and dark): keywords, strings, comments are
    all legible, and selected text stays readable.
+7a. **Debugger:** in a Workspace run `n = 21; n.fetch`, then `x = 5; 1 / 0`: a window shows the error,
+    the stack, `x = 5` in the variables, and the console answers `x + 1` with 6. Right-click or
+    double-click a frame of a method you defined > Edit Method opens it in a Browser.
 7. **Stop:** in a Workspace type `loop {}`, press Cmd-D, then Cmd-. (or System > Interrupt Running
    Code): the window stays responsive while it runs (try moving it, opening the System menu), the
    title says "running", and Stop ends it with "Interrupted." in the Transcript. Try
@@ -246,7 +263,7 @@ why the files under `gui/` do not use `# frozen_string_literal: true`. It also r
 
 ## Known limits
 
-* No resumable debugger: an error unwinds the stack; you get the message and backtrace.
+* The debugger cannot resume or step, and shows locals only for the frame that raised (see Debugger).
 * Stop cannot interrupt one long C call (see "Running code and Stop"); and code that touches Tk
   directly from a do it must hand the work to `RubyTalk::GUI.on_main { ... }` itself.
 * Versions cover methods, not class definitions or class-body statements.
