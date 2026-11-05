@@ -161,7 +161,9 @@ skips, then passes) with the message and location of the one you select, **Run A
 (only the tests that failed: fix them in the browser, press it, watch the bar turn green) and **Edit
 Test** (or double-click) to open the test. Tests run on the worker thread like any do it, so Cmd-. stops a
 slow one, and anything they print appears in the Transcript. Minitest is driven directly, not through
-`Minitest.run` or autorun, so nothing runs at exit. If the `minitest` gem is missing you are told so.
+`Minitest.run` or autorun, so nothing runs at exit. It works with Minitest 5 and 6 (6 renamed its running
+methods, so RubyTalk lists a class's test methods itself and runs them one at a time). If the `minitest` gem is
+missing you are told so.
 
 **Find and replace.** **Cmd-F** (Ctrl-F elsewhere) opens a bar under the pane you are in (any pane,
 including the Transcript); the selected text, if it is one line, fills the Find box. Typing marks every match

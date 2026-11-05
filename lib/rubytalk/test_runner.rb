@@ -5,8 +5,10 @@ module RubyTalk
   # GUI shows them; nothing here needs a window). Tests are ordinary Minitest classes
   # created in the browser, e.g. `class FooTest < Minitest::Test`.
   #
-  # Minitest is driven directly (Runnable#run with our own reporter), not through
-  # Minitest.run or autorun, so nothing runs at exit and no command line is parsed.
+  # Minitest is driven directly, one test method at a time, with our own reporter (not through
+  # Minitest.run or autorun, so nothing runs at exit and no command line is parsed). Minitest 6
+  # renamed its running methods (see run_method), so only `runnable_methods` and the per-method
+  # runner are relied on, and the filtering is done here.
   module TestRunner
     class Error < StandardError; end
 
@@ -94,11 +96,35 @@ module RubyTalk
       reporter << collector
       reporter.start
       ::Minitest.seed = Random.new_seed % 0xFFFF if ::Minitest.respond_to?(:seed=) # newer Minitest needs it; 5.14 does not have it
-      options = filter ? { filter: filter } : {}
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      classes.each { |klass| klass.run(reporter, options) }
+      classes.each do |klass|
+        method_names(klass, filter).each { |name| run_method(klass, name, reporter) }
+      end
       seconds = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
       Report.new(collector.outcomes, collector.assertions, seconds, classes)
+    end
+
+    # The test methods of +klass+ (in Minitest's order), narrowed by +filter+: a String is an exact method
+    # name (or "Class#method"), a Regexp or a "/pattern/" String is matched against both forms.
+    def method_names(klass, filter)
+      names = klass.runnable_methods
+      return names unless filter
+
+      pattern = filter.is_a?(String) && (match = filter.match(%r{\A/(.*)/\z})) ? Regexp.new(match[1]) : filter
+      names.select { |name| pattern === name || pattern === "#{klass}##{name}" }
+    rescue NotImplementedError
+      [] # an abstract runnable, such as Minitest::Runnable itself
+    end
+
+    # Run one test method and have the reporter record it. Minitest 5 calls this run_one_method(klass,
+    # name, reporter) and uses Runnable.run(reporter, options) for a whole class; Minitest 6 renamed
+    # the per-method one to Runnable.run(klass, name, reporter). The arity tells them apart.
+    def run_method(klass, name, reporter)
+      if klass.method(:run).arity == 3
+        klass.run(klass, name, reporter)
+      else
+        klass.run_one_method(klass, name, reporter)
+      end
     end
 
     # The reporter is built on first use because it needs Minitest to be loaded.

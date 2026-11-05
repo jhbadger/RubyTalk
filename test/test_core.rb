@@ -1350,6 +1350,51 @@ class CoreTest < Minitest::Test
     drop_sample_tests
   end
 
+  # Stand-ins for the two Minitest APIs (the sandbox only has Minitest 5; the user's Ruby 4.0.9 has 6.0.0).
+  def fake_runnable(style, calls)
+    Class.new do
+      define_singleton_method(:name) { 'RtFakeRunnable' }
+      define_singleton_method(:to_s) { 'RtFakeRunnable' }
+      define_singleton_method(:runnable_methods) { %w[test_a test_b test_c] }
+      if style == :minitest6
+        # Minitest 6: Runnable.run(klass, method_name, reporter) runs ONE method.
+        define_singleton_method(:run) { |klass, name, _reporter| calls << [:run, name] }
+      else
+        # Minitest 5: run(reporter, options) runs a class; run_one_method(klass, name, reporter) one method.
+        define_singleton_method(:run) { |_reporter, _options = {}| raise 'a whole-class run must not be used' }
+        define_singleton_method(:run_one_method) { |klass, name, _reporter| calls << [:run_one_method, name] }
+      end
+    end
+  end
+
+  def test_each_minitest_api_style_is_driven_correctly
+    [[:minitest6, :run], [:minitest5, :run_one_method]].each do |style, expected|
+      calls = []
+      klass = fake_runnable(style, calls)
+      RubyTalk::TestRunner.run([klass])
+      assert_equal [[expected, 'test_a'], [expected, 'test_b'], [expected, 'test_c']], calls, style.to_s
+
+      calls.clear
+      RubyTalk::TestRunner.run([klass], filter: 'test_b')
+      assert_equal [[expected, 'test_b']], calls, "#{style}: exact name"
+      calls.clear
+      RubyTalk::TestRunner.run([klass], filter: /\Atest_[ac]\z/)
+      assert_equal %w[test_a test_c], calls.map(&:last), "#{style}: Regexp"
+      calls.clear
+      RubyTalk::TestRunner.run([klass], filter: '/test_[bc]/')
+      assert_equal %w[test_b test_c], calls.map(&:last), "#{style}: /pattern/ string"
+      calls.clear
+      RubyTalk::TestRunner.run([klass], filter: 'RtFakeRunnable#test_c')
+      assert_equal %w[test_c], calls.map(&:last), "#{style}: Class#method"
+    end
+  end
+
+  def test_an_abstract_runnable_has_nothing_to_run
+    klass = Class.new { define_singleton_method(:runnable_methods) { raise NotImplementedError } }
+    report = RubyTalk::TestRunner.run([klass])
+    assert_empty report.outcomes
+  end
+
   def test_running_one_test_by_name_is_green
     sample_tests
     report = RubyTalk::Evaluator.with_transcript_io { RubyTalk::TestRunner.run([RtCalcTest], filter: 'test_double') }
