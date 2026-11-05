@@ -11,6 +11,7 @@ module RubyTalk
     # Starts RubyTalk, or performs one of the build actions and returns.
     def main(argv)
       options = {}
+      RubyTalk.script_path = File.expand_path($PROGRAM_NAME) # before anything changes directory
       # Old macOS versions pass a process serial number (-psn_...) to apps.
       args = argv.reject { |arg| arg.start_with?('-psn_') }
       rest = parser(options).parse(args)
@@ -28,8 +29,8 @@ module RubyTalk
       OptionParser.new do |opts|
         opts.banner = "usage: rubytalk [options]\n  Run from the directory containing (or to contain) changes.rb."
         opts.on('--dir DIR', 'directory holding changes.rb (default: the current directory)') { |d| options[:dir] = d }
-        opts.on('--choose-dir', 'ask which directory to use with a folder chooser (starts in your last choice)') do
-          options[:choose] = true
+        opts.on('--last-dir', 'use the folder RubyTalk was last run in (your home directory the first time)') do
+          options[:last] = true
         end
         opts.on('--selftest', 'exercise the windows with real Tk in a temporary directory, then exit') do
           options[:selftest] = true
@@ -39,7 +40,7 @@ module RubyTalk
         opts.on('--build-app [DIR]', 'build RubyTalk.app in DIR (default: current directory), then exit') do |dir|
           options[:build_app] = dir || Dir.pwd
         end
-        opts.on('--workdir DIR', 'with --build-app: always use DIR for changes.rb (default: the app asks at each start)') do |dir|
+        opts.on('--workdir DIR', 'with --build-app: always use DIR for changes.rb (default: the app uses the last folder, see --last-dir)') do |dir|
           options[:workdir] = dir
         end
         opts.on('--link', 'with --build-app: run the code in place instead of copying it into the app') do
@@ -65,18 +66,25 @@ module RubyTalk
       build[:workdir] = options[:workdir] if options[:workdir]
       app = AppBundle.build(options[:build_app], **build)
       puts app
-      where = options[:workdir] ? "keeps changes.rb in #{options[:workdir]}" : 'asks which folder to use each time it starts'
+      where = if options[:workdir]
+                "always keeps changes.rb in #{options[:workdir]}"
+              else
+                'opens in the folder you used last (your home directory the first time); System > Change Directory switches'
+              end
       warn "Move it to /Applications (or ~/Applications) if you like; it #{where}."
     end
 
-    def start(options)
-      selftest = options[:selftest] || false
-      return RubyTalk.run(selftest: selftest, choose: true) if options[:choose] && !options[:dir]
+    # --dir wins, then --last-dir, else the current directory.
+    def resolve_directory(options)
+      dir = options[:dir] || (options[:last] ? Preferences.last_directory : Dir.pwd)
+      File.expand_path(dir)
+    end
 
-      dir = File.expand_path(options[:dir] || Dir.pwd)
+    def start(options)
+      dir = resolve_directory(options)
       FileUtils.mkdir_p(dir)
       Dir.chdir(dir)
-      RubyTalk.run(dir: dir, selftest: selftest)
+      RubyTalk.run(dir: dir, selftest: options[:selftest] || false)
     end
   end
 end

@@ -14,11 +14,14 @@ module RubyTalk
   class << self
     attr_accessor :changes
 
+    # Absolute path of bin/rubytalk as it was started (needed to restart in another folder).
+    attr_accessor :script_path
+
     # Loads changes.rb from +dir+, then opens the environment (Transcript, a
     # System Browser and a Workspace). With selftest: true it runs the built-in
-    # GUI checks in a temporary directory instead and exits. With choose: true it
-    # first asks (folder chooser) which folder to use, and quits quietly if you cancel.
-    def run(dir: Dir.pwd, selftest: false, choose: false)
+    # GUI checks in a temporary directory instead and exits. The folder is remembered
+    # (Preferences) so `--last-dir` can start there next time.
+    def run(dir: Dir.pwd, selftest: false)
       begin
         require_relative 'rubytalk/gui'
       rescue LoadError => e
@@ -29,11 +32,7 @@ module RubyTalk
         dir = Dir.mktmpdir('rubytalk-selftest')
         at_exit { FileUtils.remove_entry(dir) if File.directory?(dir) }
       end
-      if choose
-        dir = GUI.choose_directory or return
-        FileUtils.mkdir_p(dir)
-        Dir.chdir(dir)
-      end
+      Preferences.remember_directory(File.expand_path(dir)) unless selftest
       setup(dir)
       GUI.start(selftest: selftest)
     end
@@ -45,6 +44,21 @@ module RubyTalk
       changes.autosave = true
       @exit_hook ||= at_exit { save_changes }
       changes
+    end
+
+    # Switch to another folder by starting afresh there: the classes of the current
+    # image are loaded into this Ruby and cannot be unloaded. Everything accepted so
+    # far is already saved. The process is replaced (same process id), which keeps
+    # the macOS Dock/app association. Returns only if the replacement failed.
+    def restart_in(dir)
+      dir = File.expand_path(dir)
+      save_changes
+      Preferences.remember_directory(dir)
+      replace_process(RbConfig.ruby, script_path || File.join(File.dirname(LIB_DIR), 'bin', 'rubytalk'), '--dir', dir)
+    end
+
+    def replace_process(*command)
+      exec(*command)
     end
 
     # Writes changes.rb if anything changed since the last save. Safe to call repeatedly.

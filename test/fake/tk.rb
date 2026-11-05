@@ -33,7 +33,7 @@ module Tk
     def tk_call(*args)
       FakeStrict.check(args)
       first = args.first.to_s
-      return 'yes' if first == 'tk_messageBox'
+      return (message_answer || 'yes') if first == 'tk_messageBox'
       return '0' if first == 'winfo'
       return generate_event(args) if first == 'event' && args[1] == 'generate'
       return image_call(args) if first == 'image'
@@ -49,7 +49,7 @@ module Tk
 
     # The folder chooser: tests set Tk.chooser_answer ('' means Cancel) and read
     # Tk.chooser_requests to see the options RubyTalk passed.
-    attr_accessor :chooser_answer
+    attr_accessor :chooser_answer, :message_answer
 
     def chooser_requests
       @chooser_requests ||= []

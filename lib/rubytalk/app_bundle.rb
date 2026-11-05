@@ -12,7 +12,7 @@ module RubyTalk
   #   rubytalk --build-app [DIR]            copy the code into the app (self-contained)
   #   rubytalk --build-app DIR --link       run the code in place (edits take effect at once)
   #   rubytalk --build-app DIR --workdir D  always use folder D for changes.rb
-  #                                         (default: the app asks, with a folder chooser, at each start)
+  #                                         (default: the folder used last time; home the first time)
   module AppBundle
     NAME = 'RubyTalk'
     IDENTIFIER = 'org.badgerjh.rubytalk'
@@ -56,9 +56,9 @@ module RubyTalk
     end
 
     # Finder starts apps in "/", so the launcher must say which folder holds
-    # changes.rb: a fixed one (--dir) or "ask me" (--choose-dir).
+    # changes.rb: a fixed one (--dir) or the one used last time (--last-dir).
     def write_launcher(path, script, workdir)
-      folder = workdir ? "--dir #{Shellwords.escape(workdir)}" : '--choose-dir'
+      folder = workdir ? "--dir #{Shellwords.escape(workdir)}" : '--last-dir'
       File.write(path, <<~SH)
         #!/bin/sh
         # #{NAME}.app launcher: Finder starts apps with almost no environment.

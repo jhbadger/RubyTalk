@@ -138,17 +138,37 @@ class IconTest < Minitest::Test
     app = RubyTalk::AppBundle.build(@dir)
     launcher_path = File.join(app, 'Contents/MacOS/RubyTalk')
     launcher = File.read(launcher_path)
-    assert_includes launcher, ' --choose-dir '
+    assert_includes launcher, ' --last-dir '
     refute_match(/ --dir /, launcher)
     out, status = Open3.capture2e('sh', launcher_path, '--help')
     assert status.success?, out
-    assert_match(/--choose-dir/, out)
+    assert_match(/--last-dir/, out)
   end
 
-  def test_cli_choose_dir_option
+  def with_home(home)
+    saved = ENV.values_at('HOME', 'XDG_CONFIG_HOME')
+    ENV['HOME'] = home
+    ENV['XDG_CONFIG_HOME'] = nil
+    yield
+  ensure
+    ENV['HOME'], ENV['XDG_CONFIG_HOME'] = saved
+  end
+
+  def test_cli_last_dir_option_and_directory_resolution
     options = {}
-    RubyTalk::CLI.parser(options).parse(['--choose-dir'])
-    assert options[:choose]
+    RubyTalk::CLI.parser(options).parse(['--last-dir'])
+    assert options[:last]
+
+    with_home(@dir) do
+      resolve = ->(opts) { RubyTalk::CLI.resolve_directory(opts) }
+      assert_equal File.expand_path(Dir.pwd), resolve.call({}), 'no flags: the current directory'
+      assert_equal @dir, resolve.call(last: true), '--last-dir: home the first time'
+      mine = File.join(@dir, 'mine')
+      FileUtils.mkdir_p(mine)
+      RubyTalk::Preferences.remember_directory(mine)
+      assert_equal mine, resolve.call(last: true)
+      assert_equal '/explicit/dir', resolve.call(last: true, dir: '/explicit/dir'), '--dir wins'
+    end
   end
 
   def test_launcher_passes_the_work_directory

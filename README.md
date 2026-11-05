@@ -37,13 +37,16 @@ ruby bin/rubytalk --build-app . --workdir ~/smalltalk-image   # always use that 
 ruby bin/rubytalk --icon-png 512 icon.png         # just the icon, any size
 ```
 
-* **Which folder holds `changes.rb`?** Finder starts apps in `/`, so the app has to be told.
-  By default it asks: a folder chooser opens at startup, starting in the folder you used last
-  time (remembered in `~/Library/Application Support/RubyTalk/last_dir`; `~/.config/rubytalk/` on
-  Linux). Pick or create a folder; Cancel quits. Different folders are different images, each
-  with its own `changes.rb`. With `--workdir DIR` the app always uses DIR and never asks. From a
-  terminal: `rubytalk` uses the current directory, `rubytalk --dir DIR` a folder you name, and
-  `rubytalk --choose-dir` shows the chooser.
+* **Which folder holds `changes.rb`?** Finder starts apps in `/`, so the app is started with
+  `--last-dir`: it opens in the folder RubyTalk was last run in, and your home directory the
+  very first time. The choice is remembered in `~/Library/Application Support/RubyTalk/last_dir`
+  (`~/.config/rubytalk/last_dir` on Linux) every time RubyTalk starts. **System > Change
+  Directory...** picks another folder and restarts RubyTalk there (the classes from one folder's
+  `changes.rb` cannot be unloaded from a running session, so a restart is the clean way to
+  switch; everything accepted so far is already saved). Different folders are different images,
+  each with its own `changes.rb`. Build with `--workdir DIR` to pin the app to one folder.
+  From a terminal, `rubytalk` uses the current directory, `rubytalk --dir DIR` a folder you
+  name, and `rubytalk --last-dir` the remembered one.
 * **Which image am I in?** The Transcript window's title is `RubyTalk: <folder>`, and its first
   lines name the changes file, the working directory and where the code is running from.
   On macOS, System > Reveal Changes File in Finder opens the folder.
@@ -182,6 +185,8 @@ why the files under `gui/` do not use `# frozen_string_literal: true`. It also r
    (`--selftest` proves Cmd-Q reaches the close handler, but not that the program then exits.)
 4. Make a change, then kill the process (`kill -9`); restart: the change is still there.
 5. Type in the filter box above the class list: the list narrows as you type.
+6. System > Change Directory...: pick a folder, confirm; RubyTalk restarts there (check the
+   window title). Quit and start the app again from Finder: it opens in that folder.
 
 ## Known limits
 

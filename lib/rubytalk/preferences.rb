@@ -4,7 +4,8 @@ require 'fileutils'
 
 module RubyTalk
   # Small per-user settings kept outside any image folder: just the folder
-  # that was chosen last time, so the folder chooser can start there.
+  # RubyTalk was last run in. `rubytalk --last-dir` (what RubyTalk.app uses)
+  # starts there; the very first time it is your home directory.
   module Preferences
     module_function
 
@@ -20,8 +21,7 @@ module RubyTalk
       File.join(directory, 'last_dir')
     end
 
-    # Where the folder chooser should start: the last folder used, else ~/RubyTalk
-    # if it exists, else the home directory.
+    # The folder used last time, or the home directory if there is none (or it has gone).
     def last_directory
       path = File.read(last_directory_file, encoding: 'UTF-8').strip
       File.directory?(path) ? path : default_directory
@@ -30,8 +30,7 @@ module RubyTalk
     end
 
     def default_directory
-      suggested = File.join(Dir.home, 'RubyTalk')
-      File.directory?(suggested) ? suggested : Dir.home
+      Dir.home
     end
 
     def remember_directory(path)

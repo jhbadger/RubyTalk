@@ -37,7 +37,6 @@ module RubyTalk
           end
           exit(failures.zero? ? 0 : 1)
         end
-        Tk.tk_call('wm', 'deiconify', '.') # it was withdrawn while the folder chooser was up
         Browser.open
         Workspace.new
         Tk.mainloop
@@ -75,17 +74,20 @@ module RubyTalk
         Tk.tk_call('proc', '::tk::mac::Quit', '', 'eval [wm protocol . WM_DELETE_WINDOW]')
       end
 
-      # Ask which folder holds this image's changes.rb (the app's default). The
-      # chooser starts in the folder used last time. Returns nil if cancelled.
-      def choose_directory
-        Tk.tk_call('wm', 'withdraw', '.')
-        set_window_icon
-        chosen = Tk.tk_call('tk_chooseDirectory', '-initialdir', Preferences.last_directory.dup,
+      # System > Change Directory...: pick another folder for changes.rb, then
+      # restart RubyTalk there (see RubyTalk.restart_in). Cancel changes nothing.
+      def change_directory
+        current = File.dirname(RubyTalk.changes.path)
+        chosen = Tk.tk_call('tk_chooseDirectory', '-initialdir', current.dup,
                             '-title', 'RubyTalk: choose the folder for changes.rb').to_s
-        return nil if chosen.empty?
+        return if chosen.empty? || File.expand_path(chosen) == File.expand_path(current)
+        return unless confirm("Switch to #{chosen}?\n\nRubyTalk will restart there. Everything accepted so far " \
+                              "is already saved in #{current}.")
 
-        Preferences.remember_directory(chosen)
-        chosen
+        FileUtils.mkdir_p(chosen)
+        RubyTalk.restart_in(chosen)
+        # Only reached if the restart failed.
+        ::Transcript.show_cr("Could not restart automatically. #{chosen} is remembered: quit and start RubyTalk again.")
       end
 
       # Open Finder on the changes file (or its folder if it has not been written yet).
@@ -216,6 +218,7 @@ module RubyTalk
         add_item(system, 'Show Changes (copy)') do
           Workspace.new(text: RubyTalk.changes.to_text, title: 'Changes (a copy: edits here are not saved)')
         end
+        add_item(system, 'Change Directory...') { change_directory }
         add_item(system, 'Reveal Changes File in Finder') { reveal_changes_file } if MAC
         add_item(system, 'Save Changes Now') do
           path = RubyTalk.save_changes

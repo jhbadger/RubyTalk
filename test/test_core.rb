@@ -5,6 +5,7 @@
 
 $LOAD_PATH.unshift(File.expand_path('../lib', __dir__))
 require 'minitest/autorun'
+require 'minitest/mock'
 require 'tmpdir'
 require 'open3'
 require 'rbconfig'
@@ -272,9 +273,7 @@ class CoreTest < Minitest::Test
 
   def test_preferences_default_and_remembered_directory
     with_home(@dir) do
-      assert_equal @dir, RubyTalk::Preferences.last_directory, 'home when ~/RubyTalk does not exist'
-      FileUtils.mkdir_p(File.join(@dir, 'RubyTalk'))
-      assert_equal File.join(@dir, 'RubyTalk'), RubyTalk::Preferences.last_directory
+      assert_equal @dir, RubyTalk::Preferences.last_directory, 'the home directory the first time'
 
       mine = File.join(@dir, 'my image')
       FileUtils.mkdir_p(mine)
@@ -283,8 +282,47 @@ class CoreTest < Minitest::Test
       assert File.file?(RubyTalk::Preferences.last_directory_file)
 
       FileUtils.remove_entry(mine)
-      assert_equal File.join(@dir, 'RubyTalk'), RubyTalk::Preferences.last_directory, 'a vanished folder is not offered'
+      assert_equal @dir, RubyTalk::Preferences.last_directory, 'a vanished folder falls back to home'
     end
+  end
+
+  def test_restart_in_saves_remembers_and_replaces_the_process
+    with_home(@dir) do
+      target = File.join(@dir, 'next')
+      FileUtils.mkdir_p(target)
+      accept("class RtRestart\nend\n") # autosave is off here, so this is unsaved
+      assert @changes.dirty?
+      saved_script = RubyTalk.script_path
+      RubyTalk.script_path = '/somewhere/bin/rubytalk'
+      command = nil
+      RubyTalk.stub(:replace_process, ->(*argv) { command = argv }) { RubyTalk.restart_in(target) }
+      assert_equal [RbConfig.ruby, '/somewhere/bin/rubytalk', '--dir', target], command
+      assert File.file?(File.join(@dir, 'changes.rb')), 'changes were saved before restarting'
+      assert_equal target, RubyTalk::Preferences.last_directory
+    ensure
+      RubyTalk.script_path = saved_script
+      Object.send(:remove_const, :RtRestart) if defined?(RtRestart)
+    end
+  end
+
+  def test_restart_in_really_execs_the_new_command
+    target = File.join(@dir, 'again')
+    FileUtils.mkdir_p(target)
+    probe = File.join(@dir, 'probe.rb')
+    File.write(probe, "puts ARGV.inspect\n")
+    script = <<~RUBY
+      ENV['HOME'] = #{@dir.inspect}
+      $LOAD_PATH.unshift(#{File.expand_path('../lib', __dir__).inspect})
+      require 'rubytalk'
+      RubyTalk.script_path = #{probe.inspect}
+      RubyTalk.setup(#{@dir.inspect})
+      RubyTalk.restart_in(#{target.inspect})
+      puts 'not reached'
+    RUBY
+    out, status = Open3.capture2e(RbConfig.ruby, '-e', script)
+    assert status.success?, out
+    assert_equal ['--dir', target].inspect, out.lines.last.strip
+    refute_match(/not reached/, out)
   end
 
   def test_preferences_never_raise_when_unwritable

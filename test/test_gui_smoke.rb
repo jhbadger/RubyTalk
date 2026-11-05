@@ -7,6 +7,7 @@
 $LOAD_PATH.unshift(File.expand_path('fake', __dir__))
 $LOAD_PATH.unshift(File.expand_path('../lib', __dir__))
 require 'minitest/autorun'
+require 'minitest/mock'
 require 'tmpdir'
 require 'rubytalk'
 require 'rubytalk/gui'
@@ -52,6 +53,43 @@ class GuiSmokeTest < Minitest::Test
     Object.send(:remove_const, :RtMl) if defined?(RtMl)
   end
 
+  def change_directory_with(answer, confirm: 'yes')
+    Tk.chooser_answer = answer
+    Tk.message_answer = confirm
+    restarted = nil
+    RubyTalk.stub(:restart_in, ->(dir) { restarted = dir }) { GUI.change_directory }
+    restarted
+  ensure
+    Tk.message_answer = nil
+  end
+
+  def test_change_directory_restarts_in_the_chosen_folder
+    target = File.join(@dir, 'other')
+    Tk.chooser_requests.clear
+    assert_equal target, change_directory_with(target)
+    assert File.directory?(target)
+    assert_equal @dir, Tk.chooser_requests.last[1], 'the chooser starts in the current folder'
+    assert_match(/Could not restart automatically/, Transcript.buffer, 'reported when the restart returns')
+  end
+
+  def test_change_directory_does_nothing_on_cancel_same_folder_or_decline
+    assert_nil change_directory_with(''), 'Cancel'
+    assert_nil change_directory_with(@dir), 'the folder already in use'
+    other = File.join(@dir, 'declined')
+    assert_nil change_directory_with(other, confirm: 'no')
+    refute File.exist?(other)
+  end
+
+  def test_run_remembers_the_folder_for_next_time
+    with_home(@dir) do
+      folder = File.join(@dir, 'remembered')
+      FileUtils.mkdir_p(folder)
+      RubyTalk.run(dir: folder)
+      assert_equal folder, Preferences.last_directory
+      assert_equal File.join(folder, 'changes.rb'), RubyTalk.changes.path
+    end
+  end
+
   def with_home(home)
     saved = ENV.values_at('HOME', 'XDG_CONFIG_HOME')
     ENV['HOME'] = home
@@ -59,45 +97,6 @@ class GuiSmokeTest < Minitest::Test
     yield
   ensure
     ENV['HOME'], ENV['XDG_CONFIG_HOME'] = saved
-  end
-
-  def test_choose_directory_remembers_the_answer_and_starts_in_the_last_one
-    with_home(@dir) do
-      chosen = File.join(@dir, 'image-a')
-      Tk.chooser_answer = chosen
-      assert_equal chosen, GUI.choose_directory
-      assert_equal chosen, File.read(Preferences.last_directory_file).strip
-
-      FileUtils.mkdir_p(chosen)
-      Tk.chooser_requests.clear
-      Tk.chooser_answer = ''
-      assert_nil GUI.choose_directory, 'Cancel returns nil'
-      assert_equal chosen, Tk.chooser_requests.last[1], 'the chooser starts in the last folder'
-    end
-  end
-
-  def test_run_with_choose_cancelled_opens_nothing
-    with_home(@dir) do
-      Tk.chooser_answer = ''
-      before = GUI.windows.size
-      RubyTalk.run(choose: true)
-      assert_equal before, GUI.windows.size
-    end
-  end
-
-  def test_run_with_choose_uses_the_chosen_folder
-    original = Dir.pwd
-    with_home(@dir) do
-      chosen = File.join(@dir, 'picked')
-      Tk.chooser_answer = chosen
-      RubyTalk.run(choose: true)
-      assert_equal File.realpath(chosen), File.realpath(Dir.pwd)
-      assert_equal File.join(chosen, 'changes.rb'), RubyTalk.changes.path
-      assert_equal [GUI::MainWindow, GUI::Browser, GUI::Workspace], GUI.windows.last(3).map(&:class)
-      assert_equal "RubyTalk: #{chosen}", GUI.windows.last(3).first.send(:title)
-    end
-  ensure
-    Dir.chdir(original)
   end
 
   def test_mac_quit_hook_runs_the_window_close_handler
@@ -284,6 +283,7 @@ class GuiSmokeTest < Minitest::Test
     edit.invoke('Print it')
     assert_equal '2 + 2 4', ws.editor.contents
     system_menu = root_menu.entries.first[1][:menu]
+    assert_includes system_menu.entries.map { |_, options| options[:label] }, 'Change Directory...'
     system_menu.invoke('Open Workspace')
     assert_instance_of GUI::Workspace, GUI.windows.last
   end
