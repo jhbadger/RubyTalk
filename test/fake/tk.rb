@@ -118,6 +118,11 @@ module Tk
     def widget_call(widget, rest)
       case rest.first
       when 'size' then widget.items.size.to_s
+      when 'count' then widget.offset_for(rest.last).to_s # text -chars first last
+      when 'index' then widget.index(rest[1]) # text index
+      when 'mark'
+        widget.insert_offset = widget.offset_for(rest[3]) if rest[1] == 'set' && rest[2] == 'insert'
+        ''
       when 'get' then widget.items[rest[1].to_i].to_s # listbox row text
       when 'cget'
         value = widget.options[rest[1].delete_prefix('-').to_sym]
@@ -300,6 +305,7 @@ end
 
 class TkText < FakeWidget
   attr_reader :content
+  attr_accessor :insert_offset
 
   def initialize(*)
     super
@@ -312,6 +318,8 @@ class TkText < FakeWidget
     raise 'text not found' unless @content.include?(string)
 
     @selection = string
+    first = @content.index(string)
+    @selection_range = [first, first + string.size]
   end
 
   def get(first, last = nil)
@@ -323,12 +331,18 @@ class TkText < FakeWidget
     end
   end
 
+  # Like real Tk, asking for sel.first/sel.last with nothing selected is an error.
+  def selection_range!
+    @selection_range || raise('text doesn\'t contain any characters tagged with "sel"')
+  end
+
   # Character offset for the index forms RubyTalk uses ("insert" is taken to be on line 1).
   def offset_for(index)
     case index.to_s
     when 'end' then @content.size
-    when 'sel.first' then @content.index(@selection.to_s) || 0
-    when 'sel.last' then (@content.index(@selection.to_s) || 0) + @selection.to_s.size
+    when 'insert' then @insert_offset || 0
+    when 'sel.first' then selection_range!.first
+    when 'sel.last' then selection_range!.last
     when 'insert linestart' then 0
     when 'insert lineend' then @content.lines.first.to_s.chomp.size
     when /\A(\d+)\.(\d+)\z/ then @content.lines[0...(Regexp.last_match(1).to_i - 1)].sum(&:size) + Regexp.last_match(2).to_i
@@ -352,9 +366,16 @@ class TkText < FakeWidget
     self
   end
 
-  def delete(*)
-    @content = +''
-    @selection = nil
+  def delete(first = '1.0', last = nil)
+    if last.nil?
+      @content.slice!(offset_for(first), 1)
+    elsif first == '1.0' && last == 'end'
+      @content = +''
+      @selection = nil
+      @selection_range = nil
+    else
+      @content.slice!(offset_for(first)...offset_for(last))
+    end
     self
   end
 
@@ -380,12 +401,18 @@ class TkText < FakeWidget
   end
 
   def tag_add(tag, first = nil, last = nil, *)
-    @selection = @content[offset_for(first)...offset_for(last)] if tag == 'sel'
+    if tag == 'sel'
+      @selection_range = [offset_for(first), offset_for(last)]
+      @selection = @content[offset_for(first)...offset_for(last)]
+    end
     self
   end
 
   def tag_remove(tag, *)
-    @selection = nil if tag == 'sel'
+    if tag == 'sel'
+      @selection = nil
+      @selection_range = nil
+    end
     self
   end
 end

@@ -162,6 +162,16 @@ Test** (or double-click) to open the test. Tests run on the worker thread like a
 slow one, and anything they print appears in the Transcript. Minitest is driven directly, not through
 `Minitest.run` or autorun, so nothing runs at exit. If the `minitest` gem is missing you are told so.
 
+**Find and replace.** **Cmd-F** (Ctrl-F elsewhere) opens a bar under the pane you are in (any pane,
+including the Transcript); the selected text, if it is one line, fills the Find box. Typing marks every match
+and selects the first from the cursor; **Return** or **Cmd-G** goes to the next, **Shift-Return** or
+**Cmd-Shift-G** to the previous, wrapping round (the status says "wrapped"). **Match case** and **Regexp** change
+how the pattern is read; in a regular expression `\1` .. `\9`, `\0` and `\&` in the Replace box stand for
+groups of the match. **Replace** replaces the selected match and moves to the next (with none selected it
+just finds one); **Replace All** does every match as a single undo step. **Escape** closes the bar. Positions
+are counted in characters, so text with accents or emoji is marked correctly. At most 1000 matches are
+coloured, though all are counted and replaced.
+
 **Versions.** Accept no longer loses the old definition. Right-click a method (in the Browser or a
 Method List) > **Versions...** to see, newest first: the current definition, every earlier version
 kept in `changes.history`, and the **original library method** if RubyTalk has overridden or removed
@@ -228,13 +238,14 @@ lib/rubytalk/search.rb       implementors / senders
 lib/rubytalk/diff.rb         line diff for the Versions window
 lib/rubytalk/stack.rb        what the debugger shows: frames, source, variables, method to edit
 lib/rubytalk/test_runner.rb  runs Minitest classes and reports plain outcomes
+lib/rubytalk/finder.rb       text search and replacement behind Find (no GUI)
 lib/rubytalk/highlighter.rb  syntax highlighting: Ripper tokens to coloured spans (no GUI)
 lib/rubytalk/preferences.rb  remembers the last folder chosen
 lib/rubytalk/icon.rb         the icon, drawn in code; PNG and .icns writers
 lib/rubytalk/app_bundle.rb   builds RubyTalk.app
 lib/rubytalk/cli.rb          command-line options
 lib/rubytalk/reflection.rb   categories, method lists, definition text (no GUI)
-lib/rubytalk/gui/*.rb        Tk windows (gui/self_test.rb is the --selftest; versions_window.rb the Versions window; debugger.rb the Debugger; test_results_window.rb the test results)
+lib/rubytalk/gui/*.rb        Tk windows (gui/self_test.rb is the --selftest; versions_window.rb the Versions window; debugger.rb the Debugger; test_results_window.rb the test results; find_bar.rb Find and Replace)
 test/test_core.rb            headless tests of everything above
 test/test_gui_smoke.rb       drives the windows against a recording stand-in for tk
 test/test_highlighter.rb      syntax highlighting (token classes, byte-to-character columns, bad input)

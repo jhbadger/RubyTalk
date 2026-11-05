@@ -131,6 +131,184 @@ class GuiSmokeTest < Minitest::Test
     Tk.rgb_answer = nil
   end
 
+  # --- find and replace ------------------------------------------------------
+
+  def find_fixture(text)
+    editor = GUI::Workspace.new(text: text).editor
+    editor.show_find
+    [editor, editor.find_bar]
+  end
+
+  def type_find(bar, pattern)
+    bar.find_var.value = +pattern
+    bar.find_entry.fire('KeyRelease')
+  end
+
+  # Tk calls with unfrozen strings (this file's literals are frozen, and the tk gem mutates its arguments).
+  def tk(*args)
+    Tk.tk_call(*args.map { |arg| arg.is_a?(String) ? arg.dup : arg })
+  end
+
+  def selection_start(editor)
+    tk(editor.text.path, 'count', '-chars', '1.0', 'sel.first').to_i
+  end
+
+  def marks(editor)
+    editor.text.tag_store.fetch('rt_find', nil)
+  end
+
+  def find_status(bar)
+    ivar(bar, :@status).options[:text]
+  end
+
+  def test_find_marks_every_match_and_selects_the_first
+    editor, bar = find_fixture('alpha beta alpha')
+    assert bar.visible?
+    type_find(bar, 'alpha')
+    assert_equal [[0, 5], [11, 16]], marks(editor)
+    assert_equal 'alpha', editor.text.get('sel.first', 'sel.last')
+    assert_equal 0, selection_start(editor)
+    assert_equal '2 matches', find_status(bar)
+    type_find(bar, 'beta')
+    assert_equal [[6, 10]], marks(editor), 'the old marks are replaced'
+    assert_equal 6, selection_start(editor)
+    type_find(bar, 'nothing')
+    assert_nil marks(editor)
+    assert_equal 'No match', find_status(bar)
+  end
+
+  def test_find_next_and_previous_step_and_wrap
+    editor, bar = find_fixture('a b a b a')
+    type_find(bar, 'a')
+    assert_equal 0, selection_start(editor)
+    bar.find(forward: true)
+    assert_equal 4, selection_start(editor)
+    bar.find(forward: true)
+    assert_equal 8, selection_start(editor)
+    bar.find(forward: true)
+    assert_equal 0, selection_start(editor)
+    assert_match(/wrapped/, find_status(bar))
+    bar.find(forward: false)
+    assert_equal 8, selection_start(editor), 'backwards from the first wraps to the last'
+    bar.find(forward: false)
+    assert_equal 4, selection_start(editor)
+  end
+
+  def test_find_match_case_and_regexp_options
+    editor, bar = find_fixture('Alpha alpha a1 a22')
+    type_find(bar, 'alpha')
+    assert_equal 2, marks(editor).size
+    ivar(bar, :@case_var).value = +'1'
+    bar.send(:refresh)
+    assert_equal 1, marks(editor).size, 'match case'
+    ivar(bar, :@regexp_var).value = +'1'
+    type_find(bar, 'a\d+')
+    assert_equal 2, marks(editor).size, 'regexp'
+    type_find(bar, '(')
+    assert_match(/Invalid pattern/, find_status(bar))
+    assert_nil marks(editor)
+  end
+
+  def test_find_prefills_from_the_selection
+    editor = GUI::Workspace.new(text: 'one two three').editor
+    editor.text.select_text('two')
+    editor.show_find
+    assert_equal 'two', editor.find_bar.find_var.value
+    assert_equal [[4, 7]], marks(editor)
+  end
+
+  def test_replace_steps_through_matches
+    editor, bar = find_fixture('foo bar foo')
+    type_find(bar, 'foo')
+    bar.replace_var.value = +'baz'
+    bar.replace
+    assert_equal 'baz bar foo', editor.contents
+    assert_equal 8, selection_start(editor), 'moves on to the next match'
+    bar.replace
+    assert_equal 'baz bar baz', editor.contents
+    bar.replace
+    assert_equal 'baz bar baz', editor.contents, 'nothing left to replace'
+    assert_equal 'No match', find_status(bar)
+  end
+
+  def test_replace_with_no_match_selected_first_finds_one
+    editor, bar = find_fixture('foo bar foo')
+    type_find(bar, 'foo')
+    editor.text.tag_remove('sel', '1.0', 'end')
+    tk(editor.text.path, 'mark', 'set', 'insert', '1.5')
+    bar.replace_var.value = +'X'
+    bar.replace
+    assert_equal 'foo bar foo', editor.contents, 'the first press only selects the next match'
+    assert_equal 8, selection_start(editor)
+    bar.replace
+    assert_equal 'foo bar X', editor.contents
+  end
+
+  def test_replace_all
+    editor, bar = find_fixture('a1 b22 c333')
+    ivar(bar, :@regexp_var).value = +'1'
+    type_find(bar, '\d+')
+    bar.replace_var.value = +'#'
+    bar.replace_all
+    assert_equal 'a# b# c#', editor.contents
+    assert_equal 'Replaced 3', find_status(bar)
+  end
+
+  def test_replace_all_with_groups_and_multibyte_text
+    editor, bar = find_fixture('John Smith é é')
+    ivar(bar, :@regexp_var).value = +'1'
+    type_find(bar, '(\w+) (\w+)')
+    bar.replace_var.value = +'\2 \1'
+    bar.replace_all
+    assert_equal 'Smith John é é', editor.contents
+    ivar(bar, :@regexp_var).value = +'0'
+    type_find(bar, 'é')
+    bar.replace_var.value = +'e'
+    bar.replace_all
+    assert_equal 'Smith John e e', editor.contents
+  end
+
+  def test_find_key_bindings_menu_and_escape
+    editor = GUI::Workspace.new(text: 'x y x').editor
+    assert_equal :break, editor.text.fire("#{GUI::MODIFIER}-Key-f")
+    bar = editor.find_bar
+    assert bar.visible?
+    type_find(bar, 'x')
+    editor.text.fire("#{GUI::MODIFIER}-Key-g")
+    assert_equal 4, selection_start(editor)
+    editor.text.fire("#{GUI::MODIFIER}-Key-G")
+    assert_equal 0, selection_start(editor)
+    bar.find_entry.fire('Escape')
+    refute bar.visible?
+    assert_nil marks(editor), 'the marks go when the bar closes'
+    editor.text.fire("#{GUI::MODIFIER}-Key-g") # Cmd-G with the bar closed opens it
+    assert bar.visible?
+
+    menubar = GUI::Workspace.new(text: 'x').window.options[:menu]
+    labels = menubar.entries.last[1][:menu].entries.map { |_, options| options[:label] }
+    assert_includes labels, 'Find...'
+    assert_includes labels, 'Find Next'
+    assert_includes labels, 'Find Previous'
+  end
+
+  def test_find_follows_changes_to_the_text
+    editor, bar = find_fixture('x')
+    type_find(bar, 'x')
+    editor.set_contents('x x x')
+    assert_equal 3, marks(editor).size, 'new contents are searched'
+    editor.text.insert('end', +' x')
+    editor.text.fire('KeyRelease')
+    assert_equal 4, marks(editor).size, 'typing updates the marks'
+  end
+
+  def test_the_transcript_can_be_searched_too
+    main = GUI::MainWindow.new
+    Transcript.show_cr('searchable line')
+    main.editor.show_find
+    type_find(main.editor.find_bar, 'searchable')
+    assert_equal 1, marks(main.editor).size
+  end
+
   # --- test runner -------------------------------------------------------
 
   def runner_fixture(passing_only: false)

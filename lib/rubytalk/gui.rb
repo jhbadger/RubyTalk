@@ -374,6 +374,10 @@ module RubyTalk
         add_item(edit, 'Inspect it', "#{MOD_LABEL}-I") { provider.call&.inspect_it }
         add_item(edit, 'Browse it', "#{MOD_LABEL}-B") { provider.call&.browse_it }
         add_item(edit, 'Hierarchy of it') { provider.call&.hierarchy_of_it }
+        add_item(edit, 'Find...', "#{MOD_LABEL}-F") { provider.call&.show_find }
+        add_item(edit, 'Find Next', "#{MOD_LABEL}-G") { provider.call&.find_next }
+        add_item(edit, 'Find Previous', "#{MOD_LABEL}-Shift-G") { provider.call&.find_previous }
+        edit.add('separator')
         add_item(edit, 'Implementors of it', "#{MOD_LABEL}-M") { provider.call&.implementors_of_it }
         add_item(edit, 'Senders of it', "#{MOD_LABEL}-N") { provider.call&.senders_of_it }
         if provider.call&.can_accept?
@@ -397,6 +401,7 @@ module RubyTalk
 end
 
 require_relative 'gui/selectable_list'
+require_relative 'gui/find_bar'
 require_relative 'gui/code_editor'
 require_relative 'gui/debugger'
 require_relative 'gui/main_window'

@@ -14,7 +14,7 @@ module RubyTalk
     # object ...). With highlight: true the text is syntax-coloured as Ruby
     # (see Highlighter); the Transcript is left plain because it mostly holds output.
     class CodeEditor
-      attr_reader :frame, :text
+      attr_reader :frame, :text, :text_frame
 
       # :light or :dark once highlighting is set up (the palette in use), else nil.
       attr_reader :palette_name
@@ -24,11 +24,33 @@ module RubyTalk
         @on_accept = on_accept
         @highlight = false
         @highlight_ready = false
-        @frame, @text = GUI.scrolled_text(parent, width: width, height: height, wrap: wrap)
+        @find_bar = nil
+        # +frame+ holds the text and, when opened, the find bar under it.
+        @frame = TkFrame.new(parent)
+        @text_frame, @text = GUI.scrolled_text(@frame, width: width, height: height, wrap: wrap)
+        @text_frame.pack(side: 'top', fill: 'both', expand: 1)
         build_menu
         bind_keys
         bind_popup
+        @text.bind('KeyRelease') { GUI.safely { text_changed } }
         setup_highlighting if highlight
+      end
+
+      # Find and Replace (Cmd-F, Cmd-G, Cmd-Shift-G): the bar is built on first use.
+      def find_bar
+        @find_bar ||= FindBar.new(self)
+      end
+
+      def show_find
+        find_bar.show(selected_text)
+      end
+
+      def find_next
+        @find_bar&.visible? ? @find_bar.find(forward: true) : show_find
+      end
+
+      def find_previous
+        @find_bar&.visible? ? @find_bar.find(forward: false) : show_find
       end
 
       def can_accept?
@@ -49,7 +71,13 @@ module RubyTalk
         # Tk leaves the cursor after inserted text; put it back at the start so
         # "do it" with no selection uses the first line.
         Tk.tk_call(@text.path, 'mark', 'set', 'insert', '1.0')
+        text_changed
+      end
+
+      # After any change to the text: recolour it and re-mark find matches.
+      def text_changed
         rehighlight
+        @find_bar&.refresh_if_visible
       end
 
       # Switch Ruby colouring off (e.g. while showing a diff) or back on.
@@ -182,8 +210,7 @@ module RubyTalk
         end
         # Our tags are newer than the selection tag, so put the selection back on top.
         Tk.tk_call(@text.path, 'tag', 'raise', 'sel')
-        @text.bind('KeyRelease') { GUI.safely { rehighlight } }
-        @text.bind('ButtonRelease-2') { GUI.safely { rehighlight } } # middle-click paste
+        @text.bind('ButtonRelease-2') { GUI.safely { text_changed } } # middle-click paste
       end
 
       # Pick the palette from the actual background colour (light or dark appearance).
@@ -194,7 +221,8 @@ module RubyTalk
       def command_keys
         @command_keys ||= {
           'd' => :do_it, 'p' => :print_it, 'i' => :inspect_it, 'b' => :browse_it,
-          'm' => :implementors_of_it, 'n' => :senders_of_it
+          'm' => :implementors_of_it, 'n' => :senders_of_it,
+          'f' => :show_find, 'g' => :find_next, 'G' => :find_previous # Cmd-Shift-G sends the capital
         }
       end
 
@@ -217,6 +245,7 @@ module RubyTalk
         GUI.add_item(@menu, 'Print it', "#{MOD_LABEL}-P") { print_it }
         GUI.add_item(@menu, 'Inspect it', "#{MOD_LABEL}-I") { inspect_it }
         GUI.add_item(@menu, 'Browse it', "#{MOD_LABEL}-B") { browse_it }
+        GUI.add_item(@menu, 'Find...', "#{MOD_LABEL}-F") { show_find }
         GUI.add_item(@menu, 'Hierarchy of it') { hierarchy_of_it }
         GUI.add_item(@menu, 'Implementors of it', "#{MOD_LABEL}-M") { implementors_of_it }
         GUI.add_item(@menu, 'Senders of it', "#{MOD_LABEL}-N") { senders_of_it }

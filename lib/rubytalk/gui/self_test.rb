@@ -20,7 +20,7 @@ module RubyTalk
         browser_accept_by_key search_implementors_and_senders method_list_window
         implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
         interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
-        versions_window hierarchy_browser debugger class_comment test_runner
+        versions_window hierarchy_browser debugger class_comment test_runner find_and_replace
       ].freeze
 
       def initialize(main)
@@ -410,6 +410,29 @@ module RubyTalk
           TestRunner.forget(Object.const_get(name))
           Object.send(:remove_const, name)
         end
+      end
+
+      # Cmd-F opens the bar; typing marks matches (real tags, byte-safe columns); Next steps; Replace All edits.
+      def check_find_and_replace
+        editor = Workspace.new(text: "foo é foo\nfoo").editor
+        editor.focus
+        update
+        generate(editor.text, "<#{MODIFIER}-Key-f>")
+        bar = editor.find_bar
+        assert(bar.visible?, 'Cmd-F did not open the find bar')
+        bar.find_var.value = 'foo'
+        generate(bar.find_entry, '<KeyRelease>')
+        tags_at = ->(index) { Tk.tk_call(editor.text.path, 'tag', 'names', index).to_s.split }
+        assert(tags_at.call('1.6').include?('rt_find'), "the second foo (after a multi-byte character) is not marked: #{tags_at.call('1.6').inspect}")
+        assert(tags_at.call('2.0').include?('rt_find'), 'a match on the second line is not marked')
+        assert_equal 'foo', editor.send(:selected_text)
+        bar.find(forward: true)
+        assert_equal '1.6', Tk.tk_call(editor.text.path, 'index', 'sel.first').to_s
+        bar.replace_var.value = 'baz'
+        bar.replace_all
+        assert_equal "baz é baz\nbaz", editor.contents
+        generate(bar.find_entry, '<Escape>')
+        assert(!bar.visible?, 'Escape did not close the bar')
       end
 
       def cleanup
