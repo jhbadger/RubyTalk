@@ -131,6 +131,101 @@ class GuiSmokeTest < Minitest::Test
     Tk.rgb_answer = nil
   end
 
+  # --- versions ---------------------------------------------------------
+
+  def versions_fixture
+    changes = RubyTalk.changes
+    Compiler.accept("class RtVw\nend\n", changes: changes)
+    Compiler.accept("def v\n  1\nend\n", klass: RtVw, changes: changes)
+    Compiler.accept("def v\n  2\nend\n", klass: RtVw, changes: changes)
+  end
+
+  def test_versions_window_lists_shows_diffs_and_reverts
+    versions_fixture
+    changed = 0
+    window = GUI::VersionsWindow.new(RtVw, :instance, 'v', on_change: -> { changed += 1 })
+    list = ivar(window, :@list)
+    assert_equal 2, list.box.items.size
+    assert_match(/\ACurrent - /, list.box.items.first)
+    assert_equal "def v\n  2\nend\n", window.code.contents, 'the newest version is selected first'
+
+    list.box.click(1)
+    assert_equal "def v\n  1\nend\n", window.code.contents
+
+    ivar(window, :@diff_var).value = +'1'
+    window.send(:show, list.selected_value)
+    assert_equal "  def v\n-   2\n+   1\n  end\n", window.code.contents, 'shows what reverting would change'
+    tags_at = ->(index) { window.code.text.tag_command(['names', index]).split }
+    assert_includes tags_at.call('2.0'), 'rt_diff_del'
+    assert_includes tags_at.call('3.0'), 'rt_diff_add'
+    refute_includes tags_at.call('1.0'), 'rt_diff_add'
+
+    window.send(:revert)
+    assert_equal 1, RtVw.new.v
+    assert_equal 1, changed
+    assert_match(/def v/, window.code.contents)
+    assert_equal 3, ivar(window, :@list).box.items.size, 'the replaced version joins the history'
+  ensure
+    Object.send(:remove_const, :RtVw) if defined?(RtVw)
+  end
+
+  def test_versions_window_with_nothing_to_show
+    window = GUI::VersionsWindow.new(String, :instance, 'upcase')
+    assert_empty ivar(window, :@list).box.items
+    assert_match(/No earlier versions/, window.code.contents)
+    window.send(:revert) # must not raise
+  end
+
+  def test_browser_opens_versions_and_remove_restores_the_original
+    Object.const_set(:RtLibB, Class.new { def old = :old })
+    browser = GUI::Browser.new(RtLibB)
+    ivar(browser, :@protocols).box.click(0)
+    methods = ivar(browser, :@methods)
+    methods.box.click(ivar(methods, :@values).index(:old))
+    browser.code.set_contents("def old\n  :changed\nend\n")
+    browser.code.accept
+    assert_equal :changed, RtLibB.new.old
+
+    browser.send(:show_versions)
+    assert_instance_of GUI::VersionsWindow, GUI.windows.last
+    assert_equal 2, ivar(GUI.windows.last, :@list).box.items.size, 'current + original'
+
+    browser.send(:remove_method)
+    assert_equal :old, RtLibB.new.old
+    assert_equal 'Restored the original method.', ivar(browser, :@status).options[:text]
+    assert_match(/def old/, browser.code.contents)
+
+    browser.code.set_contents("class RtMineB\n  def mine; end\nend\n")
+    browser.code.accept
+    ivar(browser, :@protocols).box.click(0)
+    methods = ivar(browser, :@methods)
+    methods.box.click(ivar(methods, :@values).index(:mine))
+    browser.send(:remove_method)
+    refute RtMineB.method_defined?(:mine)
+    assert_equal 'Method removed.', ivar(browser, :@status).options[:text]
+  ensure
+    %i[RtLibB RtMineB].each { |name| Object.send(:remove_const, name) if Object.const_defined?(name) }
+  end
+
+  def test_method_list_opens_versions
+    Compiler.accept("class RtMl2\nend\n", changes: RubyTalk.changes)
+    Compiler.accept("def v; 1; end\n", klass: RtMl2, changes: RubyTalk.changes)
+    Compiler.accept("def v; 2; end\n", klass: RtMl2, changes: RubyTalk.changes)
+    GUI.show_method_list(:implementors, 'v')
+    list = GUI.windows.last
+    index = ivar(list, :@hits).index { |hit| hit.label == 'RtMl2#v' }
+    ivar(list, :@list).box.click(index)
+    list.send(:versions)
+    assert_instance_of GUI::VersionsWindow, GUI.windows.last
+    assert_equal 2, ivar(GUI.windows.last, :@list).box.items.size
+    ivar(GUI.windows.last, :@list).box.click(1) # the earlier version
+    GUI.windows.last.send(:revert)
+    assert_equal 1, RtMl2.new.v
+    assert_equal "def v; 1; end\n", list.code.contents, 'the method list shows the reverted source'
+  ensure
+    Object.send(:remove_const, :RtMl2) if defined?(RtMl2)
+  end
+
   # --- running code off the main thread (interrupt) ------------------------
 
   def with_pump
@@ -388,7 +483,9 @@ class GuiSmokeTest < Minitest::Test
     assert_equal :hello, RtGuiThing.new.hi
     browser.send(:remove_method)
     refute RtGuiThing.method_defined?(:hi)
-    assert(RubyTalk.changes.entries.any? { |e| e.kind == :remove_method })
+    assert_nil RubyTalk.changes.find_method('RtGuiThing', :instance, 'hi'), 'a method you created is forgotten, not logged'
+    assert_equal %w[:hello :hi], RubyTalk.changes.versions('RtGuiThing', :instance, 'hi').map { |e| e.source[/:\w+/] },
+                 'both the replaced and the removed source are kept as versions, newest first'
   end
 
   def test_browser_accept_error_is_reported_not_raised

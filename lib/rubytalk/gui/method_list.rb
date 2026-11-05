@@ -20,7 +20,7 @@ module RubyTalk
         @list.frame.pack(side: 'top', fill: 'x')
         @list.set(hits, hits.map(&:label))
         @list.box.bind('Double-Button-1') { GUI.safely { browse } }
-        @list.context_menu([['Browse', -> { browse }]])
+        @list.context_menu([['Browse', -> { browse }], ['Versions...', -> { versions }]])
         @status = TkLabel.new(@window, text: +'', anchor: 'w')
         @status.pack(side: 'top', fill: 'x', padx: 6)
         @code = CodeEditor.new(@window, width: 90, height: 16, on_accept: -> { accept }, highlight: true,
@@ -60,6 +60,13 @@ module RubyTalk
           status("Not accepted: #{outcome.message.to_s.lines.first.to_s.strip}")
           ::Transcript.show_cr(outcome.message)
         end
+      end
+
+      def versions
+        hit = @list.selected_value
+        return unless hit&.name
+
+        VersionsWindow.new(hit.klass, hit.side, hit.name, on_change: -> { hit_selected(@list.selected_value) })
       end
 
       def browse

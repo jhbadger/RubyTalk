@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'time'
+
 module RubyTalk
   # Everything the System Browser needs to know about classes and methods,
   # with no GUI involved so it can be tested headlessly.
@@ -169,10 +171,48 @@ module RubyTalk
       entry = target && changes&.find_method(target, owner_side, name)
       return entry.source if entry
 
+      text_for_method(method, side, name)
+    end
+
+    # The text to show for a method object: its Ruby source (with where it came
+    # from), or a description of a C method.
+    def text_for_method(method, side, name)
       source = Source.method_source(method)
       return "# #{method.source_location.join(':')}\n#{source}" if source
 
       builtin_description(method, side, name)
+    end
+
+    # One entry of the Versions window. kind: :current, :previous or :original.
+    Version = Struct.new(:kind, :label, :source, :at)
+
+    # The versions of a method, newest first: the current RubyTalk definition (if any),
+    # earlier ones from changes.history, then the original library method (if RubyTalk
+    # has overridden or removed one in this session).
+    def versions(klass, side, name, changes = RubyTalk.changes)
+      target = name_of(klass)
+      list = []
+      current = changes&.find_method(target, side, name)
+      list << Version.new(:current, "Current#{when_label(current.at)}", current.source, current.at) if current
+      (changes&.versions(target, side, name) || []).each do |entry|
+        lines = entry.source.lines.size
+        list << Version.new(:previous, "#{when_label(entry.at, '')}  (#{lines} line#{'s' unless lines == 1})",
+                            entry.source, entry.at)
+      end
+      original = Compiler.originals[[klass, side, name.to_s]]
+      if original
+        list << Version.new(:original, 'Original (library)', text_for_method(original.method, side, name), nil)
+      end
+      list
+    end
+
+    # " - 2026-11-05 12:03" in local time; "earlier session" when unknown.
+    def when_label(iso, prefix = ' - ')
+      return "#{prefix}earlier session" unless iso
+
+      "#{prefix}#{Time.iso8601(iso).localtime.strftime('%Y-%m-%d %H:%M')}"
+    rescue ArgumentError
+      "#{prefix}earlier session"
     end
 
     def method_summary(klass, side, name)

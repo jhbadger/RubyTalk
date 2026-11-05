@@ -57,7 +57,8 @@ module RubyTalk
         @protocols = pane(panes, 14) { |value| protocol_selected(value) }
         @methods = pane(panes, 28) { |value| method_selected(value) }
         @classes.context_menu([['New subclass', -> { new_subclass }], ['Remove class', -> { remove_class }]])
-        @methods.context_menu([['Implementors of this selector', -> { selector_search(:implementors) }],
+        @methods.context_menu([['Versions...', -> { show_versions }],
+                               ['Implementors of this selector', -> { selector_search(:implementors) }],
                                ['Senders of this selector', -> { selector_search(:senders) }],
                                ['Remove method', -> { remove_method }]])
         build_options
@@ -186,6 +187,18 @@ module RubyTalk
         status(outcome.message)
       end
 
+      def show_versions
+        return unless @klass && @method
+
+        VersionsWindow.new(@klass, side, @method, on_change: -> { versions_changed })
+      end
+
+      # A revert in the Versions window: show the method as it is now.
+      def versions_changed
+        refresh_methods
+        method_selected(@method) if @method
+      end
+
       def selector_search(kind)
         GUI.show_method_list(kind, @method.to_s) if @method
       end
@@ -199,13 +212,19 @@ module RubyTalk
 
       def remove_method
         return unless @klass && @method
-        return unless GUI.confirm("Remove #{Reflection.name_of(@klass)}##{@method}?")
+        return unless GUI.confirm("Remove #{Reflection.name_of(@klass)}##{@method}?\n\n" \
+                                  'The version you remove stays available under Versions.')
 
-        Compiler.remove_method(@klass, side, @method, @changes)
-        @method = nil
+        result = Compiler.remove_method(@klass, side, @method, @changes)
+        @method = nil unless result == :reverted
         refresh_methods
-        @code.set_contents(Reflection.method_template)
-        status('Method removed.')
+        if result == :reverted
+          method_selected(@method)
+          status('Restored the original method.')
+        else
+          @code.set_contents(Reflection.method_template)
+          status('Method removed.')
+        end
       rescue NameError => e
         status("Cannot remove: #{e.message.lines.first.to_s.strip}")
       end

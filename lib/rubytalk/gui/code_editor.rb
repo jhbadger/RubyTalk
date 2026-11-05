@@ -16,10 +16,14 @@ module RubyTalk
     class CodeEditor
       attr_reader :frame, :text
 
+      # :light or :dark once highlighting is set up (the palette in use), else nil.
+      attr_reader :palette_name
+
       def initialize(parent, evaluator:, width: 80, height: 12, wrap: 'none', on_accept: nil, highlight: false)
         @evaluator = evaluator
         @on_accept = on_accept
         @highlight = false
+        @highlight_ready = false
         @frame, @text = GUI.scrolled_text(parent, width: width, height: height, wrap: wrap)
         build_menu
         bind_keys
@@ -46,6 +50,18 @@ module RubyTalk
         # "do it" with no selection uses the first line.
         Tk.tk_call(@text.path, 'mark', 'set', 'insert', '1.0')
         rehighlight
+      end
+
+      # Switch Ruby colouring off (e.g. while showing a diff) or back on.
+      def highlighting=(flag)
+        @highlight = flag && @highlight_ready
+        @highlight ? rehighlight : clear_highlighting
+      end
+
+      def clear_highlighting
+        return unless @highlight_ready
+
+        Highlighter::TAGS.each { |tag| Tk.tk_call(@text.path, 'tag', 'remove', "rt_#{tag}", '1.0', 'end') }
       end
 
       # Recolour the whole text. Cheap enough to run on every key release; texts
@@ -149,7 +165,9 @@ module RubyTalk
 
       def setup_highlighting
         @highlight = true
-        palette = Highlighter::PALETTES.fetch(dark_background? ? :dark : :light)
+        @highlight_ready = true
+        @palette_name = dark_background? ? :dark : :light
+        palette = Highlighter::PALETTES.fetch(@palette_name)
         Highlighter::TAGS.each do |tag|
           Tk.tk_call(@text.path, 'tag', 'configure', "rt_#{tag}", '-foreground', palette.fetch(tag).dup)
         end

@@ -17,6 +17,18 @@ module RubyTalk
 
     Outcome = Struct.new(:ok, :message, :klass, :side, :method_name, :error, keyword_init: true)
 
+    # What a method was before RubyTalk first overrode or removed it, so it can be
+    # put back (even a built-in method written in C). +own+ is false when the
+    # method was inherited: restoring then means removing the override.
+    Original = Struct.new(:method, :visibility, :own)
+
+    @originals = {}
+
+    # { [class, side, "name"] => Original or nil (it did not exist before) }, for this process.
+    def self.originals
+      @originals
+    end
+
     module_function
 
     def accept(source, klass: nil, side: :instance, changes: RubyTalk.changes)
@@ -80,6 +92,7 @@ module RubyTalk
         key = Digest::SHA1.hexdigest(statement)[0, 12]
       end
 
+      capture_original(klass, side, key) if kind == :method
       evaluate_member(statement, klass, side, description, "rubytalk:#{target}")
       changes.record(kind: kind, target: target, side: side, key: key, source: statement)
       sep = side == :class ? '.' : '#'
@@ -100,10 +113,12 @@ module RubyTalk
           TOPLEVEL_BINDING.eval(entry.source, "changes.rb:#{entry.target}", 1)
         when :method, :body
           klass = Reflection.lookup(entry.target) or raise NameError, "unknown class #{entry.target}"
+          capture_original(klass, entry.side, entry.key) if entry.kind == :method
           evaluate_member(entry.source, klass, entry.side, Source.describe(entry.source), "changes.rb:#{entry.target}")
         when :remove_method
           klass = Reflection.lookup(entry.target)
           if klass
+            capture_original(klass, entry.side, entry.key)
             begin
               Reflection.owner_for(klass, entry.side).send(:remove_method, entry.key.to_sym)
             rescue NameError
@@ -114,11 +129,74 @@ module RubyTalk
       end
     end
 
+    # Remove a method. If RubyTalk had overridden a method that already existed, this puts the
+    # original back (:reverted). A method you created is simply removed (:removed). Removing a
+    # library method nobody overrode is logged in changes.rb so it persists (:removed); its
+    # original stays available in the Versions window.
+    # Returns :reverted or :removed.
     def remove_method(klass, side, name, changes)
-      Reflection.owner_for(klass, side).send(:remove_method, name.to_sym)
       target = Reflection.name_of(klass)
+      overridden = changes.find_method(target, side, name)
+      capture_original(klass, side, name)
+      original = originals[[klass, side, name.to_s]]
+      return restore_original(klass, side, name, changes) && :reverted if overridden && original
+
+      Reflection.owner_for(klass, side).send(:remove_method, name.to_sym)
       changes.delete_where { |e| e.kind == :method && e.target == target && e.side == side && e.key == name.to_s }
-      changes.record(kind: :remove_method, target: target, side: side, key: name.to_s)
+      changes.record(kind: :remove_method, target: target, side: side, key: name.to_s) if original || !overridden
+      :removed
+    end
+
+    # Remember the method as it is now, unless we already have (or it does not exist yet).
+    def capture_original(klass, side, name)
+      key = [klass, side, name.to_s]
+      return if originals.key?(key)
+
+      owner = Reflection.owner_for(klass, side)
+      originals[key] = begin
+        method = owner.instance_method(name.to_sym)
+        Original.new(method, visibility_of(owner, name.to_sym), method.owner == owner)
+      rescue NameError
+        nil
+      end
+    end
+
+    def visibility_of(owner, name)
+      if owner.private_method_defined?(name) then :private
+      elsif owner.protected_method_defined?(name) then :protected
+      else :public
+      end
+    end
+
+    # Put the original method back and forget our override and any logged removal.
+    def restore_original(klass, side, name, changes)
+      original = originals[[klass, side, name.to_s]] or raise Error, "no original version of #{name} is known"
+      owner = Reflection.owner_for(klass, side)
+      symbol = name.to_sym
+      if original.own
+        owner.send(:define_method, symbol, original.method)
+        owner.send(original.visibility, symbol)
+      elsif owner.method_defined?(symbol, false) || owner.private_method_defined?(symbol, false)
+        owner.send(:remove_method, symbol) # uncovers the inherited original
+      end
+      target = Reflection.name_of(klass)
+      changes.delete_where do |e|
+        e.target == target && e.side == side && e.key == name.to_s && %i[method remove_method].include?(e.kind)
+      end
+      true
+    end
+
+    # Go back to +version+ (a Reflection::Version). The version being replaced is kept in the
+    # history, so a revert can itself be reverted. Returns an Outcome.
+    def revert(klass, side, name, version, changes)
+      if version.kind == :original
+        restore_original(klass, side, name, changes)
+        return Outcome.new(ok: true, message: "#{Reflection.name_of(klass)}##{name} restored to the original",
+                           klass: klass, side: side, method_name: name.to_s)
+      end
+      accept(version.source, klass: klass, side: side, changes: changes)
+    rescue Error => e
+      Outcome.new(ok: false, message: e.message)
     end
 
     def remove_class(klass, changes)

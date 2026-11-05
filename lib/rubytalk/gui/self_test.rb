@@ -20,6 +20,7 @@ module RubyTalk
         browser_accept_by_key search_implementors_and_senders method_list_window
         implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
         interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
+        versions_window
       ].freeze
 
       def initialize(main)
@@ -332,6 +333,22 @@ module RubyTalk
         editor = Workspace.new(text: 'RubyTalk::GUI::Inspector.new([1, 2]); :ok').editor
         editor.do_it
         assert(GUI.windows.last.is_a?(Inspector), 'the Inspector was not opened')
+      end
+
+      # Redefine a method twice, then open its Versions window: the list, the selected
+      # version's text and a revert, with real widgets.
+      def check_versions_window
+        klass = ::RtSelfTest
+        changes = RubyTalk.changes
+        Compiler.accept("def hi\n  :v2\nend\n", klass: klass, changes: changes)
+        Compiler.accept("def hi\n  :v3\nend\n", klass: klass, changes: changes)
+        window = VersionsWindow.new(klass, :instance, 'hi')
+        list = ivar(window, :@list)
+        assert(list_size(list) >= 3, "expected current + two earlier versions, got #{list_size(list)}")
+        click(list, 1)
+        assert(window.code.contents.include?(':v2'), "the newest earlier version was not shown: #{window.code.contents.inspect}")
+        window.send(:revert)
+        assert_equal :v2, klass.new.hi
       end
 
       def cleanup

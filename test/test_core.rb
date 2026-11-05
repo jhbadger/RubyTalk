@@ -308,13 +308,16 @@ class CoreTest < Minitest::Test
   end
 
   def test_roundtrip_through_file_in_fresh_process
+    Object.const_set(:RtLib, Class.new) unless defined?(RtLib)
     accept("class RtShape\n  def area; 0; end\nend\n")
     accept("class RtSquare < RtShape\n  def initialize(s); @s = s; end\nend\n")
     accept("def area\n  @s * @s\nend\n", klass: RtSquare)
     accept("def make(s)\n  new(s)\nend\n", klass: RtSquare, side: :class)
     accept("def rt_twice\n  self * 2\nend\n", klass: Integer)
-    accept("def gone; end\n", klass: RtShape)
-    RubyTalk::Compiler.remove_method(RtShape, :instance, 'gone', @changes)
+    # Removing a method that already existed (a library method) is logged so it persists.
+    RtLib.class_eval { def old; :old; end }
+    RubyTalk::Compiler.remove_method(RtLib, :instance, 'old', @changes)
+    refute RtLib.method_defined?(:old)
     assert @changes.dirty?
 
     path = @changes.save!
@@ -323,15 +326,16 @@ class CoreTest < Minitest::Test
     text = File.read(path)
     assert_includes text, '#!rubytalk kind=class target=RtSquare created=true'
     assert_includes text, '#!rubytalk kind=method target=RtSquare side=class key=make'
-    assert_includes text, '#!rubytalk kind=remove_method target=RtShape side=instance key=gone'
+    assert_includes text, '#!rubytalk kind=remove_method target=RtLib side=instance key=old'
 
     script = <<~RUBY
       $LOAD_PATH.unshift(#{File.expand_path('../lib', __dir__).inspect})
       require 'rubytalk'
+      class RtLib; def old; :old; end; end
       RubyTalk.setup(#{@dir.inspect})
       puts RtSquare.make(4).area
       puts 5.rt_twice
-      puts RtShape.new.respond_to?(:gone)
+      puts RtLib.new.respond_to?(:old)
       puts RubyTalk.changes.user_defined?('RtSquare')
       puts RubyTalk.changes.dirty?
     RUBY
@@ -339,7 +343,7 @@ class CoreTest < Minitest::Test
     assert status.success?, out
     assert_equal %w[16 10 false true false], out.lines.map(&:strip).last(5)
   ensure
-    %i[RtSquare RtShape].each { |c| Object.send(:remove_const, c) if Object.const_defined?(c) }
+    %i[RtSquare RtShape RtLib].each { |c| Object.send(:remove_const, c) if Object.const_defined?(c) }
     Integer.send(:remove_method, :rt_twice) if Integer.method_defined?(:rt_twice)
   end
 
@@ -474,8 +478,9 @@ class CoreTest < Minitest::Test
     assert_includes File.read(path), 'key=a'
     assert_equal "# old\n", File.read("#{path}.bak"), 'backup stays the file as it was at startup'
     refute @changes.dirty?
-    RubyTalk::Compiler.remove_method(RtAuto, :instance, 'a', @changes)
-    assert_includes File.read(path), 'kind=remove_method'
+    assert_equal :removed, RubyTalk::Compiler.remove_method(RtAuto, :instance, 'a', @changes)
+    refute_includes File.read(path), 'key=a', 'a method you created is simply forgotten'
+    assert_includes File.read(File.join(@dir, 'changes.history')), 'key=a', 'but its source is kept in the history'
   ensure
     Object.send(:remove_const, :RtAuto) if defined?(RtAuto)
   end
@@ -538,6 +543,176 @@ class CoreTest < Minitest::Test
     assert_empty RubyTalk::Search.senders('no_such_selector_anywhere_zzz', @changes)
   ensure
     Object.send(:remove_const, :RtSend) if defined?(RtSend)
+  end
+
+  # --- Versions, history and originals ------------------------------------
+
+  def make_class(name, parent = Object, &body)
+    Object.const_set(name, Class.new(parent, &body))
+  end
+
+  def drop_classes(*names)
+    names.each { |name| Object.send(:remove_const, name) if Object.const_defined?(name) }
+  end
+
+  def test_history_keeps_replaced_versions_in_a_file_and_reloads_them
+    @changes.autosave = true
+    accept("class RtVer\nend\n")
+    accept("def v\n  1\nend\n", klass: RtVer)
+    accept("def v\n  2\nend\n", klass: RtVer)
+    accept("def v\n  2\nend\n", klass: RtVer) # unchanged: nothing new to remember
+    accept("def v\n  3\nend\n", klass: RtVer)
+
+    versions = @changes.versions('RtVer', :instance, 'v')
+    assert_equal ["def v\n  2\nend\n", "def v\n  1\nend\n"], versions.map(&:source), 'newest first'
+    assert(versions.all? { |entry| entry.at.match?(/\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\z/) })
+    history = File.read(File.join(@dir, 'changes.history'))
+    assert_equal 2, history.scan('#!rubytalk kind=method').size
+
+    fresh = RubyTalk::ChangeSet.new(File.join(@dir, 'changes.rb'))
+    fresh.load!
+    assert_equal 2, fresh.versions('RtVer', :instance, 'v').size, 'history survives a restart'
+    assert_equal "def v\n  3\nend\n", fresh.find_method('RtVer', :instance, 'v').source
+  ensure
+    drop_classes(:RtVer)
+  end
+
+  def test_history_is_written_on_save_even_without_autosave
+    accept("class RtVer3\nend\n")
+    accept("def v; 1; end\n", klass: RtVer3)
+    accept("def v; 2; end\n", klass: RtVer3)
+    refute File.exist?(File.join(@dir, 'changes.history')), 'nothing written yet'
+    @changes.save!
+    assert_includes File.read(File.join(@dir, 'changes.history')), 'def v; 1; end'
+  ensure
+    drop_classes(:RtVer3)
+  end
+
+  def test_entries_from_older_files_have_no_timestamp
+    entries = RubyTalk::ChangeSet.parse("#!rubytalk kind=method target=X side=instance key=m\ndef m; end\n")
+    assert_nil entries.first.at
+    assert_equal ' - earlier session', RubyTalk::Reflection.when_label(nil)
+  end
+
+  def test_override_of_a_method_can_be_reverted_to_its_original
+    make_class(:RtOwn) { def hello = :orig }
+    accept("def hello\n  :changed\nend\n", klass: RtOwn)
+    assert_equal :changed, RtOwn.new.hello
+    versions = RubyTalk::Reflection.versions(RtOwn, :instance, 'hello', @changes)
+    assert_equal %i[current original], versions.map(&:kind)
+    assert_match(/\ACurrent - \d{4}-\d\d-\d\d \d\d:\d\d\z/, versions.first.label)
+    assert_equal 'Original (library)', versions.last.label
+    assert_includes versions.last.source, 'hello'
+
+    out = RubyTalk::Compiler.revert(RtOwn, :instance, 'hello', versions.last, @changes)
+    assert out.ok, out.message
+    assert_equal :orig, RtOwn.new.hello
+    assert_nil @changes.find_method('RtOwn', :instance, 'hello')
+    assert_equal 1, @changes.versions('RtOwn', :instance, 'hello').size, 'the override is kept in the history'
+  ensure
+    drop_classes(:RtOwn)
+  end
+
+  def test_override_of_an_inherited_method_reverts_by_removing_the_override
+    parent = make_class(:RtParent) { def hi = :parent }
+    child = make_class(:RtChild, parent)
+    accept("def hi\n  :child\nend\n", klass: child)
+    assert_equal :child, child.new.hi
+    assert_equal :reverted, RubyTalk::Compiler.remove_method(child, :instance, 'hi', @changes)
+    assert_equal :parent, child.new.hi
+    refute child.method_defined?(:hi, false)
+    assert_empty(@changes.entries.reject { |e| e.kind == :class })
+  ensure
+    drop_classes(:RtChild, :RtParent)
+  end
+
+  def test_builtin_c_method_can_be_restored
+    string_class = make_class(:RtCStr, String)
+    string_class.send(:define_method, :up2, String.instance_method(:upcase)) # an own method with a C body
+    accept("def up2\n  :overridden\nend\n", klass: string_class)
+    assert_equal :overridden, string_class.new('ab').up2
+    versions = RubyTalk::Reflection.versions(string_class, :instance, 'up2', @changes)
+    assert_match(/implemented in C/, versions.last.source)
+    RubyTalk::Compiler.revert(string_class, :instance, 'up2', versions.last, @changes)
+    assert_equal 'AB', string_class.new('ab').up2
+  ensure
+    drop_classes(:RtCStr)
+  end
+
+  def test_restoring_keeps_the_original_visibility
+    make_class(:RtVis) { private def secret = :s }
+    accept("def secret\n  :changed\nend\n", klass: RtVis)
+    RubyTalk::Compiler.remove_method(RtVis, :instance, 'secret', @changes)
+    assert RtVis.private_method_defined?(:secret)
+    assert_equal :s, RtVis.new.send(:secret)
+  ensure
+    drop_classes(:RtVis)
+  end
+
+  def test_removing_a_method_you_created_is_forgotten_not_logged
+    accept("class RtMine\nend\n")
+    accept("def mine; end\n", klass: RtMine)
+    assert_equal :removed, RubyTalk::Compiler.remove_method(RtMine, :instance, 'mine', @changes)
+    refute RtMine.method_defined?(:mine)
+    assert_equal [:class], @changes.entries.map(&:kind)
+    assert_equal 1, @changes.versions('RtMine', :instance, 'mine').size
+  ensure
+    drop_classes(:RtMine)
+  end
+
+  def test_removing_a_library_method_is_logged_and_recoverable
+    make_class(:RtLib2) { def old = :old }
+    assert_equal :removed, RubyTalk::Compiler.remove_method(RtLib2, :instance, 'old', @changes)
+    refute RtLib2.method_defined?(:old)
+    assert_equal [:remove_method], @changes.entries.map(&:kind)
+    versions = RubyTalk::Reflection.versions(RtLib2, :instance, 'old', @changes)
+    assert_equal [:original], versions.map(&:kind)
+    RubyTalk::Compiler.revert(RtLib2, :instance, 'old', versions.first, @changes)
+    assert_equal :old, RtLib2.new.old
+    assert_empty @changes.entries, 'the logged removal is cleared'
+  ensure
+    drop_classes(:RtLib2)
+  end
+
+  def test_reverting_to_a_previous_version_can_itself_be_reverted
+    accept("class RtRev\nend\n")
+    accept("def v\n  1\nend\n", klass: RtRev)
+    accept("def v\n  2\nend\n", klass: RtRev)
+    versions = RubyTalk::Reflection.versions(RtRev, :instance, 'v', @changes)
+    assert_equal %i[current previous], versions.map(&:kind)
+    assert RubyTalk::Compiler.revert(RtRev, :instance, 'v', versions[1], @changes).ok
+    assert_equal 1, RtRev.new.v
+
+    versions = RubyTalk::Reflection.versions(RtRev, :instance, 'v', @changes)
+    assert_equal %i[current previous previous], versions.map(&:kind)
+    assert_equal [1, 2, 1], versions.map { |v| v.source[/\d/].to_i }
+    assert_match(/\A\d{4}-\d\d-\d\d \d\d:\d\d  \(3 lines\)\z/, versions[1].label)
+    RubyTalk::Compiler.revert(RtRev, :instance, 'v', versions[1], @changes)
+    assert_equal 2, RtRev.new.v
+  ensure
+    drop_classes(:RtRev)
+  end
+
+  def test_revert_to_original_with_nothing_known_fails_cleanly
+    version = RubyTalk::Reflection::Version.new(:original, 'Original (library)', '', nil)
+    out = RubyTalk::Compiler.revert(String, :instance, 'rt_never_touched', version, @changes)
+    refute out.ok
+    assert_match(/no original version/, out.message)
+  end
+
+  def test_diff
+    diff = RubyTalk::Diff
+    assert_equal [[' ', 'a'], ['-', 'b'], ['+', 'x'], [' ', 'c'], ['+', 'd']], diff.lines("a\nb\nc\n", "a\nx\nc\nd\n")
+    assert_equal "  a\n- b\n+ x\n", diff.unified("a\nb\n", "a\nx\n")
+    assert_equal [[' ', 'same']], diff.lines("same\n", "same\n")
+    assert_equal [['+', 'new']], diff.lines('', "new\n")
+    assert_equal [['-', 'old']], diff.lines("old\n", nil)
+    assert_empty diff.lines(nil, nil)
+    assert diff.changed?("a\n", "b\n")
+    refute diff.changed?("a\n", "a")
+    big = (1..600).map(&:to_s).join("\n")
+    assert_nil diff.lines(big, big.reverse)
+    assert_equal "(too large to compare)\n", diff.unified(big, big.reverse)
   end
 
   # --- Reflection -------------------------------------------------------
