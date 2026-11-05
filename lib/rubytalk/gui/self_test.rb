@@ -20,7 +20,7 @@ module RubyTalk
         browser_accept_by_key search_implementors_and_senders method_list_window
         implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
         interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
-        versions_window
+        versions_window hierarchy_browser
       ].freeze
 
       def initialize(main)
@@ -349,6 +349,15 @@ module RubyTalk
         assert(window.code.contents.include?(':v2'), "the newest earlier version was not shown: #{window.code.contents.inspect}")
         window.send(:revert)
         assert_equal :v2, klass.new.hi
+      end
+
+      # Hierarchy mode of the browser, with real widgets: the list starts at BasicObject.
+      def check_hierarchy_browser
+        browser = Browser.open(::RtSelfTest, hierarchy: true)
+        classes = ivar(browser, :@classes)
+        assert(list_size(classes) >= 3, "expected BasicObject, Object, RtSelfTest; got #{list_size(classes)} rows")
+        assert_equal 'BasicObject', Tk.tk_call(classes.box.path, 'get', 0).to_s
+        assert(browser.code.contents.start_with?('class RtSelfTest'), 'the class was not selected')
       end
 
       def cleanup

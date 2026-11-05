@@ -118,6 +118,7 @@ module Tk
     def widget_call(widget, rest)
       case rest.first
       when 'size' then widget.items.size.to_s
+      when 'get' then widget.items[rest[1].to_i].to_s # listbox row text
       when 'cget'
         value = widget.options[rest[1].delete_prefix('-').to_sym]
         value.respond_to?(:path) ? value.path : value.to_s

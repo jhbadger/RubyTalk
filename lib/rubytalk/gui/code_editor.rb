@@ -104,6 +104,15 @@ module RubyTalk
         Browser.open(target.is_a?(Module) ? target : target.class)
       end
 
+      # Evaluate the selection and open the hierarchy of the class it gives (or of its class).
+      def hierarchy_of_it
+        result, = evaluate_selection
+        return unless result&.ok
+
+        target = result.value
+        Browser.open(target.is_a?(Module) ? target : target.class, hierarchy: true)
+      end
+
       # The selection (or the word at the cursor) taken as a method name, not evaluated.
       def implementors_of_it
         selector = selector_text
@@ -214,6 +223,7 @@ module RubyTalk
         GUI.add_item(@menu, 'Print it', "#{MOD_LABEL}-P") { print_it }
         GUI.add_item(@menu, 'Inspect it', "#{MOD_LABEL}-I") { inspect_it }
         GUI.add_item(@menu, 'Browse it', "#{MOD_LABEL}-B") { browse_it }
+        GUI.add_item(@menu, 'Hierarchy of it') { hierarchy_of_it }
         GUI.add_item(@menu, 'Implementors of it', "#{MOD_LABEL}-M") { implementors_of_it }
         GUI.add_item(@menu, 'Senders of it', "#{MOD_LABEL}-N") { senders_of_it }
         if can_accept?

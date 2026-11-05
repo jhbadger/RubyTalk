@@ -323,6 +323,7 @@ module RubyTalk
         add_item(edit, 'Print it', "#{MOD_LABEL}-P") { provider.call&.print_it }
         add_item(edit, 'Inspect it', "#{MOD_LABEL}-I") { provider.call&.inspect_it }
         add_item(edit, 'Browse it', "#{MOD_LABEL}-B") { provider.call&.browse_it }
+        add_item(edit, 'Hierarchy of it') { provider.call&.hierarchy_of_it }
         add_item(edit, 'Implementors of it', "#{MOD_LABEL}-M") { provider.call&.implementors_of_it }
         add_item(edit, 'Senders of it', "#{MOD_LABEL}-N") { provider.call&.senders_of_it }
         if provider.call&.can_accept?

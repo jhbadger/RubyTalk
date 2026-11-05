@@ -12,27 +12,31 @@ module RubyTalk
     # definition; a protocol shows a template for a new method; a method shows
     # its source. Accept (Cmd-S / Ctrl-S) compiles whatever is in the code pane
     # and logs it in changes.rb. Right-click lists for remove / new subclass.
+    #
+    # With hierarchy: true the class list is the hierarchy of one class instead of a
+    # category: its superclass chain from BasicObject, then all its subclasses, each
+    # level indented. Everything else works the same (browse, accept, versions ...).
     class Browser
       extend MainThreadNew
 
-      def self.open(target = nil, method: nil, side: :instance)
-        new(target, method: method, side: side)
+      def self.open(target = nil, method: nil, side: :instance, hierarchy: false)
+        new(target, method: method, side: side, hierarchy: hierarchy)
       end
 
       attr_reader :code
 
-      def initialize(target = nil, method: nil, side: :instance)
+      def initialize(target = nil, method: nil, side: :instance, hierarchy: false)
         @changes = RubyTalk.changes
         @catalog = Reflection.catalog(@changes)
         @category = @klass = @protocol = @method = nil
+        @hierarchy_root = target if hierarchy && target.is_a?(Module) && Reflection.name_of(target)
         @window = TkToplevel.new
-        GUI.window_title(@window, 'System Browser')
+        GUI.window_title(@window, @hierarchy_root ? "Hierarchy of #{Reflection.name_of(@hierarchy_root)}" : 'System Browser')
         GUI.place(@window)
         build
         GUI.build_menubar(@window, -> { @code })
         GUI.windows << self
-        @categories.set(@catalog.names)
-        select_target(target, method: method, side: side) if target.is_a?(Module) && Reflection.name_of(target)
+        open_on(target, method, side)
       end
 
       # Navigate to a class (and optionally one of its methods).
@@ -49,6 +53,30 @@ module RubyTalk
 
       private
 
+      def open_on(target, method, side)
+        if @hierarchy_root
+          @hierarchy_rows = Reflection.hierarchy(@hierarchy_root)
+          @categories.set([+"Hierarchy of #{Reflection.name_of(@hierarchy_root)}"])
+          @categories.select_index(0)
+          select_in_hierarchy(target, method: method, side: side)
+        else
+          @categories.set(@catalog.names)
+          select_target(target, method: method, side: side) if target.is_a?(Module) && Reflection.name_of(target)
+        end
+      end
+
+      # Hierarchy mode's version of select_target.
+      def select_in_hierarchy(klass, method: nil, side: :instance)
+        @classes.clear_filter
+        refresh_classes
+        @classes.select_value(klass)
+        @side_var.value = side.to_s.dup
+        return unless method
+
+        @protocols.select_value(:all)
+        @methods.select_value(method.to_sym)
+      end
+
       def build
         panes = TkFrame.new(@window)
         panes.pack(side: 'top', fill: 'both', expand: 1)
@@ -56,7 +84,9 @@ module RubyTalk
         @classes = pane(panes, 26, filter: true) { |value| class_selected(value) }
         @protocols = pane(panes, 14) { |value| protocol_selected(value) }
         @methods = pane(panes, 28) { |value| method_selected(value) }
-        @classes.context_menu([['New subclass', -> { new_subclass }], ['Remove class', -> { remove_class }]])
+        @classes.context_menu([['New subclass', -> { new_subclass }],
+                               ['Hierarchy of this class', -> { show_hierarchy }],
+                               ['Remove class', -> { remove_class }]])
         @methods.context_menu([['Versions...', -> { show_versions }],
                                ['Implementors of this selector', -> { selector_search(:implementors) }],
                                ['Senders of this selector', -> { selector_search(:senders) }],
@@ -119,11 +149,21 @@ module RubyTalk
       end
 
       def refresh_classes
-        modules = @category ? @catalog.classes_in(@category) : []
-        needle = @classes.filter_text.strip.downcase
-        modules = modules.select { |mod| Reflection.name_of(mod).downcase.include?(needle) } unless needle.empty?
-        @classes.set(modules, modules.map { |mod| Reflection.name_of(mod) })
+        modules, labels = visible_classes
+        @classes.set(modules, labels)
         @classes.select_value(@klass, notify: false) if @klass
+      end
+
+      # The class list: the selected category, or the hierarchy rows; narrowed by the filter box.
+      def visible_classes
+        pairs = if @hierarchy_root
+                  @hierarchy_rows.map { |row| [row.klass, row.label] }
+                else
+                  (@category ? @catalog.classes_in(@category) : []).map { |mod| [mod, Reflection.name_of(mod)] }
+                end
+        needle = @classes.filter_text.strip.downcase
+        pairs = pairs.select { |mod, _| Reflection.name_of(mod).downcase.include?(needle) } unless needle.empty?
+        [pairs.map(&:first), pairs.map(&:last)]
       end
 
       def class_selected(klass)
@@ -181,10 +221,24 @@ module RubyTalk
           ::Transcript.show_cr(outcome.message)
           return
         end
-        @catalog = Reflection.catalog(@changes)
-        @categories.set(@catalog.names)
-        select_target(outcome.klass, method: outcome.method_name, side: outcome.side)
+        class_list_changed(outcome.klass, method: outcome.method_name, side: outcome.side)
         status(outcome.message)
+      end
+
+      # Classes were added or removed: rebuild the lists and go to +klass+.
+      def class_list_changed(klass, method: nil, side: :instance)
+        @catalog = Reflection.catalog(@changes)
+        if @hierarchy_root
+          @hierarchy_rows = Reflection.hierarchy(@hierarchy_root)
+          select_in_hierarchy(klass, method: method, side: side)
+        else
+          @categories.set(@catalog.names)
+          select_target(klass, method: method, side: side)
+        end
+      end
+
+      def show_hierarchy
+        Browser.open(@klass, hierarchy: true) if @klass
       end
 
       def show_versions
@@ -233,10 +287,18 @@ module RubyTalk
         return unless @klass
         return unless GUI.confirm("Remove class #{Reflection.name_of(@klass)} and all its changes?")
 
-        Compiler.remove_class(@klass, @changes)
+        removed = @klass
+        Compiler.remove_class(removed, @changes)
         @catalog = Reflection.catalog(@changes)
-        @categories.set(@catalog.names)
-        @categories.select_value(Reflection::USER)
+        if @hierarchy_root
+          @klass = nil
+          @hierarchy_root = Object if removed.equal?(@hierarchy_root)
+          @hierarchy_rows = Reflection.hierarchy(@hierarchy_root)
+          refresh_classes
+        else
+          @categories.set(@catalog.names)
+          @categories.select_value(Reflection::USER)
+        end
         status('Class removed.')
       rescue Compiler::Error => e
         status(e.message)

@@ -380,8 +380,11 @@ class CoreTest < Minitest::Test
 
   def test_remove_class_only_for_user_classes
     accept("class RtGone\nend\n")
+    removed = RtGone # keep it alive: its name survives remove_const while referenced
     RubyTalk::Compiler.remove_class(RtGone, @changes)
     refute defined?(RtGone)
+    refute_includes RubyTalk::Reflection.all_modules, removed, 'a removed class is no longer listed'
+    refute(RubyTalk::Reflection.hierarchy(Object).any? { |row| row.klass.equal?(removed) })
     assert_empty @changes.entries
     assert_raises(RubyTalk::Compiler::Error) { RubyTalk::Compiler.remove_class(String, @changes) }
   end
@@ -713,6 +716,42 @@ class CoreTest < Minitest::Test
     big = (1..600).map(&:to_s).join("\n")
     assert_nil diff.lines(big, big.reverse)
     assert_equal "(too large to compare)\n", diff.unified(big, big.reverse)
+  end
+
+  # --- Hierarchy --------------------------------------------------------
+
+  def test_hierarchy_of_a_class_is_its_ancestors_then_all_its_subclasses
+    make_class(:RtH1)
+    make_class(:RtH2, RtH1)
+    make_class(:RtH3, RtH2)
+    make_class(:RtH4, RtH1)
+    Class.new(RtH1) # anonymous classes are not listed
+    rows = RubyTalk::Reflection.hierarchy(RtH1)
+    assert_equal ['BasicObject', '  Object', '    RtH1', '      RtH2', '        RtH3', '      RtH4'], rows.map(&:label)
+    assert_equal [0, 1, 2, 3, 4, 3], rows.map(&:depth)
+    assert_equal ['BasicObject', '  Object', '    RtH1', '      RtH2', '        RtH3'],
+                 RubyTalk::Reflection.hierarchy(RtH2).map(&:label), 'siblings are not part of it'
+    assert_equal %w[BasicObject Object Numeric Integer], RubyTalk::Reflection.hierarchy(Integer).map { |r| r.klass.name }
+  ensure
+    drop_classes(:RtH4, :RtH3, :RtH2, :RtH1)
+  end
+
+  def test_hierarchy_of_a_module_lists_the_classes_that_include_it_directly
+    Object.const_set(:RtMod, Module.new)
+    make_class(:RtIncA) { include RtMod }
+    make_class(:RtIncB, RtIncA) # inherits the include: not a direct includer
+    assert_equal ['RtMod', '  RtIncA'], RubyTalk::Reflection.hierarchy(RtMod).map(&:label)
+    assert_includes RubyTalk::Reflection.hierarchy(Comparable).map { |row| row.klass.name }, 'String'
+  ensure
+    drop_classes(:RtIncB, :RtIncA, :RtMod)
+  end
+
+  def test_hierarchy_of_object_is_capped_and_fast
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    rows = RubyTalk::Reflection.hierarchy(Object)
+    assert_equal 'BasicObject', rows.first.label
+    assert_operator rows.size, :<=, RubyTalk::Reflection::MAX_HIERARCHY
+    assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 2.0
   end
 
   # --- Reflection -------------------------------------------------------

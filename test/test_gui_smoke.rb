@@ -131,6 +131,56 @@ class GuiSmokeTest < Minitest::Test
     Tk.rgb_answer = nil
   end
 
+  # --- hierarchy ---------------------------------------------------------
+
+  def test_hierarchy_browser_lists_the_hierarchy_and_works_like_a_browser
+    Object.const_set(:RtHb1, Class.new)
+    Object.const_set(:RtHb2, Class.new(RtHb1))
+    browser = GUI::Browser.open(RtHb1, hierarchy: true)
+    assert_equal ['Hierarchy of RtHb1'], ivar(browser, :@categories).box.items
+    classes = ivar(browser, :@classes)
+    assert_equal ['BasicObject', '  Object', '    RtHb1', '      RtHb2'], classes.box.items
+    assert_equal "class RtHb1 < Object\nend\n", browser.code.contents, 'the class you asked about is selected'
+
+    browser.code.set_contents("class RtHb3 < RtHb2\nend\n")
+    browser.code.accept
+    assert_equal ['BasicObject', '  Object', '    RtHb1', '      RtHb2', '        RtHb3'], classes.box.items,
+                 'a new subclass joins the hierarchy and is selected'
+    assert_match(/class RtHb3 < RtHb2/, browser.code.contents)
+
+    ivar(classes, :@filter_var).value = +'hb2'
+    browser.send(:refresh_classes)
+    assert_equal ['      RtHb2'], classes.box.items, 'the filter box works on the hierarchy'
+    ivar(classes, :@filter_var).value = +''
+    browser.send(:refresh_classes)
+
+    browser.send(:remove_class) # RtHb3 is still selected
+    refute defined?(RtHb3)
+    assert_equal ['BasicObject', '  Object', '    RtHb1', '      RtHb2'], classes.box.items
+  ensure
+    %i[RtHb3 RtHb2 RtHb1].each { |name| Object.send(:remove_const, name) if Object.const_defined?(name) }
+  end
+
+  def test_hierarchy_opens_from_the_browser_and_from_an_editor
+    browser = GUI::Browser.open(String)
+    browser.send(:show_hierarchy)
+    window = GUI.windows.last
+    assert_equal String, ivar(window, :@hierarchy_root)
+    assert_equal ['BasicObject', '  Object', '    String'], ivar(window, :@classes).box.items.first(3)
+
+    GUI::Workspace.new(text: 'String').editor.hierarchy_of_it
+    assert_equal String, ivar(GUI.windows.last, :@hierarchy_root)
+    GUI::Workspace.new(text: '3').editor.hierarchy_of_it
+    assert_equal Integer, ivar(GUI.windows.last, :@hierarchy_root), 'a non-class gives the hierarchy of its class'
+  end
+
+  def test_normal_browser_is_unaffected_by_hierarchy_mode
+    browser = GUI::Browser.open(String)
+    assert_nil ivar(browser, :@hierarchy_root)
+    assert_includes ivar(browser, :@categories).box.items, 'Text'
+    assert_includes ivar(browser, :@classes).box.items, 'String'
+  end
+
   # --- versions ---------------------------------------------------------
 
   def versions_fixture

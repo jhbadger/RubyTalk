@@ -51,13 +51,20 @@ module RubyTalk
 
       object = Object.const_get(name)
       object.is_a?(Module) ? object : nil
-    rescue NameError
+    rescue NameError, LoadError
       nil
+    end
+
+    # Is +mod+ still reachable by its own name? A class removed with remove_const keeps
+    # its name for as long as anything refers to it, but it is no longer part of the system.
+    def listed?(mod)
+      name = name_of(mod)
+      !name.nil? && lookup(name).equal?(mod)
     end
 
     def all_modules
       modules = []
-      ObjectSpace.each_object(Module) { |mod| modules << mod if name_of(mod) }
+      ObjectSpace.each_object(Module) { |mod| modules << mod if listed?(mod) }
       modules.sort_by { |mod| name_of(mod) }
     end
 
@@ -84,6 +91,70 @@ module RubyTalk
     end
 
     # --- Classes ------------------------------------------------------------
+
+    # One line of a hierarchy: a class or module and how far it is indented.
+    HierarchyRow = Struct.new(:klass, :depth) do
+      def label
+        "#{'  ' * depth}#{Reflection.name_of(klass)}"
+      end
+    end
+
+    # Hierarchy lists stop here (the subclasses of Object alone number in the hundreds).
+    MAX_HIERARCHY = 3000
+
+    # The Smalltalk hierarchy view of +klass+:
+    #   a class   -> its superclass chain from BasicObject down to it, then ALL its
+    #                subclasses below it, each level indented one step more;
+    #   a module  -> the module, then the classes and modules that include it directly.
+    def hierarchy(klass)
+      rows = []
+      if klass.is_a?(Class)
+        chain = []
+        current = klass
+        while current
+          chain.unshift(current)
+          current = current.superclass
+        end
+        chain.each_with_index { |ancestor, depth| rows << HierarchyRow.new(ancestor, depth) }
+        add_subclasses(klass, chain.size, children_by_parent, rows)
+      else
+        rows << HierarchyRow.new(klass, 0)
+        direct_includers(klass).each { |includer| rows << HierarchyRow.new(includer, 1) }
+      end
+      rows.first(MAX_HIERARCHY)
+    end
+
+    # { parent class => [named subclasses, sorted by name] }, built in one pass.
+    def children_by_parent
+      children = Hash.new { |hash, key| hash[key] = [] }
+      ObjectSpace.each_object(Class) do |klass|
+        next if klass.singleton_class? || !listed?(klass)
+
+        parent = klass.superclass
+        children[parent] << klass if parent
+      end
+      children.each_value { |list| list.sort_by! { |klass| name_of(klass) } }
+      children
+    end
+
+    def add_subclasses(klass, depth, children, rows)
+      children.fetch(klass, []).each do |child|
+        break if rows.size >= MAX_HIERARCHY
+
+        rows << HierarchyRow.new(child, depth)
+        add_subclasses(child, depth + 1, children, rows)
+      end
+    end
+
+    # Classes and modules that include +mod+ themselves (not through a superclass).
+    def direct_includers(mod)
+      includers = all_modules.select do |candidate|
+        next false if candidate.equal?(mod) || !candidate.include?(mod)
+
+        !(candidate.is_a?(Class) && candidate.superclass&.include?(mod))
+      end
+      includers.sort_by { |candidate| name_of(candidate) }
+    end
 
     def class_definition(klass)
       name = name_of(klass)
