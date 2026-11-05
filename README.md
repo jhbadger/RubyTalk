@@ -151,6 +151,17 @@ a class that already existed, RubyTalk keeps your comment in `changes.rb` as a s
 comment from its source file is shown until you change it. Clear the comment (or put the original back)
 to return to the original. A new class starts from a template with a `# Describe NewClass here.` line.
 
+**Tests.** Tests are ordinary Minitest classes made in the browser (`Minitest` is loaded for you; class list
+right-click > **New test class** starts `class FooTest < Minitest::Test` with a first test). Right-click a
+class > **Run tests** runs `FooTest`, `TestFoo` or `FooSpec` for it (or the class itself if it is a test
+class); right-click a `test_...` method > **Run this test**; **System > Run All User Tests** runs every test
+class you created. A results window shows a green or red bar, every test (errors and failures first, then
+skips, then passes) with the message and location of the one you select, **Run Again**, **Run Failures**
+(only the tests that failed: fix them in the browser, press it, watch the bar turn green) and **Edit
+Test** (or double-click) to open the test. Tests run on the worker thread like any do it, so Cmd-. stops a
+slow one, and anything they print appears in the Transcript. Minitest is driven directly, not through
+`Minitest.run` or autorun, so nothing runs at exit. If the `minitest` gem is missing you are told so.
+
 **Versions.** Accept no longer loses the old definition. Right-click a method (in the Browser or a
 Method List) > **Versions...** to see, newest first: the current definition, every earlier version
 kept in `changes.history`, and the **original library method** if RubyTalk has overridden or removed
@@ -216,13 +227,14 @@ lib/rubytalk/compiler.rb     Accept, replay, remove method/class
 lib/rubytalk/search.rb       implementors / senders
 lib/rubytalk/diff.rb         line diff for the Versions window
 lib/rubytalk/stack.rb        what the debugger shows: frames, source, variables, method to edit
+lib/rubytalk/test_runner.rb  runs Minitest classes and reports plain outcomes
 lib/rubytalk/highlighter.rb  syntax highlighting: Ripper tokens to coloured spans (no GUI)
 lib/rubytalk/preferences.rb  remembers the last folder chosen
 lib/rubytalk/icon.rb         the icon, drawn in code; PNG and .icns writers
 lib/rubytalk/app_bundle.rb   builds RubyTalk.app
 lib/rubytalk/cli.rb          command-line options
 lib/rubytalk/reflection.rb   categories, method lists, definition text (no GUI)
-lib/rubytalk/gui/*.rb        Tk windows (gui/self_test.rb is the --selftest; versions_window.rb the Versions window; debugger.rb the Debugger)
+lib/rubytalk/gui/*.rb        Tk windows (gui/self_test.rb is the --selftest; versions_window.rb the Versions window; debugger.rb the Debugger; test_results_window.rb the test results)
 test/test_core.rb            headless tests of everything above
 test/test_gui_smoke.rb       drives the windows against a recording stand-in for tk
 test/test_highlighter.rb      syntax highlighting (token classes, byte-to-character columns, bad input)

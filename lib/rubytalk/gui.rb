@@ -191,6 +191,54 @@ module RubyTalk
         nil
       end
 
+      # Is +widget+'s background dark? (Decides between the light and dark colour palettes.)
+      def dark_background?(widget)
+        background = Tk.tk_call(widget.path, 'cget', '-background').to_s.dup
+        red, green, blue = Tk.tk_call('winfo', 'rgb', widget.path, background).to_s.split.map(&:to_i)
+        return false unless blue
+
+        (((0.299 * red) + (0.587 * green) + (0.114 * blue)) / 65_535.0) < 0.5
+      rescue StandardError
+        false
+      end
+
+      # Run the tests of +klass+ (a Minitest class itself, or the class FooTest/TestFoo/FooSpec
+      # tests) and show the results.
+      def run_tests_for(klass)
+        name = Reflection.name_of(klass)
+        classes = TestRunner.test_classes_for(klass)
+        if classes.empty?
+          ::Transcript.show_cr("No tests found for #{name}. Define a Minitest class named #{name}Test " \
+                               '(class list right-click > New test class).')
+          return
+        end
+        run_tests(classes, name)
+      end
+
+      # One test method of a test class.
+      def run_test_method(klass, method_name)
+        run_tests([klass], "#{Reflection.name_of(klass)}##{method_name}", method_name.to_s)
+      end
+
+      def run_all_user_tests
+        classes = TestRunner.user_test_classes
+        return ::Transcript.show_cr('No test classes have been created in RubyTalk yet.') if classes.empty?
+
+        run_tests(classes, 'all your tests')
+      end
+
+      # Run on the evaluator (a worker thread: Stop works, the windows stay alive), then show a
+      # results window whose Run Again / Run Failures call back into this.
+      def run_tests(classes, title, filter = nil)
+        runner = lambda do |only|
+          report = nil
+          result = Evaluator.run { report = TestRunner.run(classes, filter: only) }
+          result.ok ? report : nil
+        end
+        report = runner.call(filter)
+        TestResultsWindow.new(title, report, runner: runner, filter: filter) if report
+      end
+
       # Run an implementors/senders search and show the results in a Method List.
       def show_method_list(kind, selector)
         ::Transcript.show_cr("Searching for #{kind} of #{selector}...")
@@ -302,6 +350,7 @@ module RubyTalk
           Tk.tk_call('wm', 'deiconify', '.')
           Tk.tk_call('raise', '.')
         end
+        add_item(system, 'Run All User Tests') { run_all_user_tests }
         add_item(system, 'Show Changes (copy)') do
           Workspace.new(text: RubyTalk.changes.to_text, title: 'Changes (a copy: edits here are not saved)')
         end
@@ -356,4 +405,5 @@ require_relative 'gui/browser'
 require_relative 'gui/inspector'
 require_relative 'gui/method_list'
 require_relative 'gui/versions_window'
+require_relative 'gui/test_results_window'
 require_relative 'gui/self_test'

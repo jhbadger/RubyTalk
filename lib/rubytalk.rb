@@ -40,6 +40,7 @@ module RubyTalk
     # Everything except the windows: useful for tests and scripts.
     def setup(dir = Dir.pwd)
       self.changes = ChangeSet.new(File.join(File.expand_path(dir), 'changes.rb'))
+      TestRunner.load_minitest # so `class FooTest < Minitest::Test` in changes.rb and the browser works
       changes.load!
       changes.autosave = true
       @exit_hook ||= at_exit { save_changes }
@@ -83,6 +84,7 @@ require_relative 'rubytalk/diff'
 require_relative 'rubytalk/stack'
 require_relative 'rubytalk/compiler'
 require_relative 'rubytalk/search'
+require_relative 'rubytalk/test_runner'
 require_relative 'rubytalk/preferences'
 require_relative 'rubytalk/icon'
 require_relative 'rubytalk/app_bundle'

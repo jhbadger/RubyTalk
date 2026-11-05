@@ -20,7 +20,7 @@ module RubyTalk
         browser_accept_by_key search_implementors_and_senders method_list_window
         implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
         interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
-        versions_window hierarchy_browser debugger class_comment
+        versions_window hierarchy_browser debugger class_comment test_runner
       ].freeze
 
       def initialize(main)
@@ -386,6 +386,30 @@ module RubyTalk
         assert(again.code.contents.start_with?("# selftest doc\n"), 'a new browser did not show the comment')
       ensure
         Object.send(:remove_const, :RtSelfDoc) if Object.const_defined?(:RtSelfDoc)
+      end
+
+      # Define a class with a passing and a failing Minitest test, run them from the class (on the
+      # worker thread, through real Minitest) and look at the results window.
+      def check_test_runner
+        changes = RubyTalk.changes
+        TestRunner.load_minitest
+        Compiler.accept("class RtSelfCalc\nend\n", changes: changes)
+        Compiler.accept("class RtSelfCalcTest < Minitest::Test\nend\n", changes: changes)
+        Compiler.accept("def test_passes\n  assert true\nend\n", klass: ::RtSelfCalcTest, changes: changes)
+        Compiler.accept("def test_fails\n  assert_equal 1, 2\nend\n", klass: ::RtSelfCalcTest, changes: changes)
+        GUI.run_tests_for(::RtSelfCalc)
+        window = GUI.windows.last
+        assert(window.is_a?(TestResultsWindow), 'no results window opened')
+        assert_equal 2, list_size(ivar(window, :@list))
+        bar = ivar(window, :@bar)
+        assert_equal '1 of 2 tests failed', Tk.tk_call(bar.path, 'cget', '-text').to_s
+      ensure
+        %i[RtSelfCalcTest RtSelfCalc].each do |name|
+          next unless Object.const_defined?(name)
+
+          TestRunner.forget(Object.const_get(name))
+          Object.send(:remove_const, name)
+        end
       end
 
       def cleanup

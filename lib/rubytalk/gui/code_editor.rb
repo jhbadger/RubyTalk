@@ -188,13 +188,7 @@ module RubyTalk
 
       # Pick the palette from the actual background colour (light or dark appearance).
       def dark_background?
-        background = Tk.tk_call(@text.path, 'cget', '-background').to_s.dup
-        red, green, blue = Tk.tk_call('winfo', 'rgb', @text.path, background).to_s.split.map(&:to_i)
-        return false unless blue
-
-        (((0.299 * red) + (0.587 * green) + (0.114 * blue)) / 65_535.0) < 0.5
-      rescue StandardError
-        false
+        GUI.dark_background?(@text)
       end
 
       def command_keys

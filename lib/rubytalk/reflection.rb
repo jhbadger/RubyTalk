@@ -204,6 +204,11 @@ module RubyTalk
       "# Describe NewClass here.\nclass NewClass < #{superclass_name}\nend\n"
     end
 
+    # A starting point for tests of +name+ (see TestRunner for how they are found).
+    def test_class_template(name)
+      "# Tests for #{name}.\nclass #{name}Test < Minitest::Test\n  def test_something\n    assert true\n  end\nend\n"
+    end
+
     def class_summary(klass)
       kind = klass.is_a?(Class) ? 'class' : 'module'
       origin = RubyTalk.changes&.user_defined?(name_of(klass)) ? 'user-defined' : 'built-in or loaded library'

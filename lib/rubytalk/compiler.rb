@@ -224,6 +224,7 @@ module RubyTalk
       parent_name, _, simple = name.rpartition('::')
       parent = parent_name.empty? ? Object : Reflection.lookup(parent_name)
       parent.send(:remove_const, simple.to_sym)
+      TestRunner.forget(klass)
       changes.delete_for_class(name)
     end
   end

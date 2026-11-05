@@ -84,10 +84,13 @@ module RubyTalk
         @classes = pane(panes, 26, filter: true) { |value| class_selected(value) }
         @protocols = pane(panes, 14) { |value| protocol_selected(value) }
         @methods = pane(panes, 28) { |value| method_selected(value) }
-        @classes.context_menu([['New subclass', -> { new_subclass }],
+        @classes.context_menu([['Run tests', -> { run_class_tests }],
+                               ['New test class', -> { new_test_class }],
+                               ['New subclass', -> { new_subclass }],
                                ['Hierarchy of this class', -> { show_hierarchy }],
                                ['Remove class', -> { remove_class }]])
-        @methods.context_menu([['Versions...', -> { show_versions }],
+        @methods.context_menu([['Run this test', -> { run_test }],
+                               ['Versions...', -> { show_versions }],
                                ['Implementors of this selector', -> { selector_search(:implementors) }],
                                ['Senders of this selector', -> { selector_search(:senders) }],
                                ['Remove method', -> { remove_method }]])
@@ -239,6 +242,25 @@ module RubyTalk
 
       def show_hierarchy
         Browser.open(@klass, hierarchy: true) if @klass
+      end
+
+      def run_class_tests
+        GUI.run_tests_for(@klass) if @klass
+      end
+
+      # Only for instance methods named test...: the Minitest convention.
+      def run_test
+        return unless @klass && @method
+        return status('Select a method whose name starts with test.') unless side == :instance && @method.to_s.start_with?('test')
+
+        GUI.run_test_method(@klass, @method)
+      end
+
+      def new_test_class
+        return unless @klass
+
+        @code.set_contents(Reflection.test_class_template(Reflection.name_of(@klass)))
+        status('Edit the tests, then Accept to create the test class.')
       end
 
       def show_versions
