@@ -303,6 +303,8 @@ module RubyTalk
         runner = lambda do |only|
           report = nil
           result = Evaluator.run { report = TestRunner.run(classes, filter: only) }
+          # A run that could not be made (not a failing test: those are results) is shown like any error.
+          notify_error(result.error, result.failure) unless result.ok || result.error.is_a?(TestRunner::Error)
           result.ok ? report : nil
         end
         report = runner.call(filter)

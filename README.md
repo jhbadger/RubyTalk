@@ -23,7 +23,8 @@ prints PASS/FAIL per check, and exits non-zero on any failure. It never touches 
 ruby ~/lib/src/rubytalk/bin/rubytalk --selftest
 ```
 
-It cannot test things that need a person; see the checklist at the end.
+When a check fails it also prints the last few Transcript lines, which usually hold the real reason (an error
+the check itself could not see). It cannot test things that need a person; see the checklist at the end.
 
 ## macOS app and icon
 

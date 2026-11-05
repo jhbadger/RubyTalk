@@ -50,10 +50,14 @@ module RubyTalk
       false
     end
 
+    # Every test class: Minitest's own list where it has one, plus a scan for subclasses, so this does not
+    # depend on how a given Minitest version keeps its registry.
     def runnables
       return [] unless defined?(::Minitest::Runnable)
 
-      ::Minitest::Runnable.runnables.select { |klass| Reflection.listed?(klass) }
+      registered = ::Minitest::Runnable.respond_to?(:runnables) ? Array(::Minitest::Runnable.runnables) : []
+      scanned = ObjectSpace.each_object(Class).select { |klass| klass < ::Minitest::Runnable }
+      (registered + scanned).uniq.select { |klass| Reflection.listed?(klass) }
     end
 
     # The test classes to run for +klass+: itself if it is a test class, else FooTest, TestFoo or
@@ -75,7 +79,9 @@ module RubyTalk
 
     # Take a removed class out of Minitest's list so it is not run later.
     def forget(klass)
-      ::Minitest::Runnable.runnables.delete(klass) if defined?(::Minitest::Runnable)
+      return unless defined?(::Minitest::Runnable) && ::Minitest::Runnable.respond_to?(:runnables)
+
+      ::Minitest::Runnable.runnables.delete(klass)
     end
 
     # Run +classes+ (optionally only test methods matching +filter+, a Regexp or String).

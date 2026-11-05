@@ -1317,6 +1317,17 @@ class CoreTest < Minitest::Test
     drop_sample_tests
   end
 
+  def test_test_classes_are_found_even_without_minitests_own_registry
+    sample_tests
+    Minitest::Runnable.stub(:runnables, []) do
+      assert_equal [RtCalcTest], RubyTalk::TestRunner.test_classes_for(RtCalc), 'found by scanning for subclasses'
+      assert_includes RubyTalk::TestRunner.user_test_classes(@changes), RtCalcTest
+    end
+    refute_includes RubyTalk::TestRunner.runnables, Class.new(Minitest::Test), 'anonymous classes are not listed'
+  ensure
+    drop_sample_tests
+  end
+
   def test_running_tests_reports_every_kind_of_outcome
     sample_tests
     report = RubyTalk::Evaluator.with_transcript_io { RubyTalk::TestRunner.run([RtCalcTest]) }

@@ -42,9 +42,10 @@ module RubyTalk
 
       def run_check(name)
         send("check_#{name}")
-        @results << [name, nil]
+        @results << [name, nil, nil]
       rescue Exception => e # rubocop:disable Lint/RescueException -- report every failure, never abort the run
-        @results << [name, e]
+        # What the Transcript said just before it failed: usually the real reason.
+        @results << [name, e, Transcript.buffer.lines.last(6).map { |line| line.strip[0, 160] }.reject(&:empty?)]
       ensure
         update
       end
@@ -53,10 +54,11 @@ module RubyTalk
         out = $stdout
         out.puts
         out.puts "RubyTalk self-test (Ruby #{RUBY_VERSION}, Tk #{tk_version})"
-        @results.each do |name, error|
+        @results.each do |name, error, transcript|
           if error
             out.puts "  FAIL  #{name}: #{error.class}: #{error.message.lines.first.to_s.strip}"
             Array(error.backtrace).first(4).each { |line| out.puts "          #{line}" }
+            Array(transcript).each { |line| out.puts "          transcript: #{line}" }
           else
             out.puts "  PASS  #{name}"
           end
@@ -440,6 +442,8 @@ module RubyTalk
       # the bracket next to the cursor is marked: real key events on a real text widget.
       def check_auto_indent_and_brackets
         editor = Workspace.new(text: 'x').editor
+        editor.focus # Tk sends generated key events to the focus window
+        update
         path = editor.text.path
         cursor_at = ->(index) { Tk.tk_call(path, 'mark', 'set', 'insert', index) }
 

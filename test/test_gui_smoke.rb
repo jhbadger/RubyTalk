@@ -653,6 +653,39 @@ class GuiSmokeTest < Minitest::Test
     drop_runner_fixture
   end
 
+  def test_a_run_that_cannot_be_made_opens_the_debugger_not_a_silent_failure
+    runner_fixture
+    windows = GUI.windows.size
+    TestRunner.stub(:run, ->(*) { raise 'the runner broke' }) { GUI.run_tests_for(RtGc) }
+    assert_instance_of GUI::Debugger, GUI.windows.last
+    assert_equal windows + 1, GUI.windows.size
+    assert_match(/the runner broke/, Transcript.buffer)
+  ensure
+    drop_runner_fixture
+  end
+
+  def test_a_missing_minitest_is_explained_in_the_transcript_only
+    runner_fixture
+    windows = GUI.windows.size
+    TestRunner.stub(:run, ->(*) { raise TestRunner::Error, 'Minitest is not installed (gem install minitest).' }) do
+      GUI.run_tests_for(RtGc)
+    end
+    assert_equal windows, GUI.windows.size
+    assert_match(/Minitest is not installed/, Transcript.buffer)
+  ensure
+    drop_runner_fixture
+  end
+
+  def test_selftest_failures_show_what_the_transcript_said
+    main = GUI::MainWindow.new
+    selftest = GUI::SelfTest.new(main)
+    Transcript.show_cr('the real reason it failed')
+    selftest.send(:run_check, :no_such_check)
+    out, = capture_io { selftest.send(:report) }
+    assert_match(/FAIL  no_such_check/, out)
+    assert_match(/transcript: the real reason it failed/, out)
+  end
+
   def test_all_green_shows_a_green_bar
     runner_fixture(passing_only: true)
     GUI.run_tests_for(RtGc)
