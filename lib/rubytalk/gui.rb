@@ -37,6 +37,7 @@ module RubyTalk
           end
           exit(failures.zero? ? 0 : 1)
         end
+        Tk.tk_call('wm', 'deiconify', '.') # it was withdrawn while the folder chooser was up
         Browser.open
         Workspace.new
         Tk.mainloop
@@ -63,6 +64,35 @@ module RubyTalk
       rescue StandardError => e
         @icon_image = nil
         ::Transcript.show_cr("(window icon not set: #{e.class}: #{e.message.lines.first.to_s.strip})")
+      end
+
+      # macOS routes Cmd-Q and the application menu's Quit through the Tcl command
+      # ::tk::mac::Quit (default: exit, which would skip saving). Redefine it to run
+      # the Transcript window's close handler, so every way of quitting takes the
+      # same path: GUI.quit. (A Tcl alias to a Ruby callback does not work: the
+      # callback handle "rb_out c000NN" is two words, not a command name.)
+      def define_quit_hook
+        Tk.tk_call('proc', '::tk::mac::Quit', '', 'eval [wm protocol . WM_DELETE_WINDOW]')
+      end
+
+      # Ask which folder holds this image's changes.rb (the app's default). The
+      # chooser starts in the folder used last time. Returns nil if cancelled.
+      def choose_directory
+        Tk.tk_call('wm', 'withdraw', '.')
+        set_window_icon
+        chosen = Tk.tk_call('tk_chooseDirectory', '-initialdir', Preferences.last_directory.dup,
+                            '-title', 'RubyTalk: choose the folder for changes.rb').to_s
+        return nil if chosen.empty?
+
+        Preferences.remember_directory(chosen)
+        chosen
+      end
+
+      # Open Finder on the changes file (or its folder if it has not been written yet).
+      def reveal_changes_file
+        path = RubyTalk.changes&.path or return
+        target = File.exist?(path) ? ['open', '-R', path] : ['open', File.dirname(path)]
+        system(*target)
       end
 
       # Draw anything pending now (used before slow searches).
@@ -186,6 +216,7 @@ module RubyTalk
         add_item(system, 'Show Changes (copy)') do
           Workspace.new(text: RubyTalk.changes.to_text, title: 'Changes (a copy: edits here are not saved)')
         end
+        add_item(system, 'Reveal Changes File in Finder') { reveal_changes_file } if MAC
         add_item(system, 'Save Changes Now') do
           path = RubyTalk.save_changes
           ::Transcript.show_cr(path ? "Changes saved to #{path}" : 'No unsaved changes.')
@@ -215,14 +246,10 @@ module RubyTalk
         add_item(edit, 'Select All') { generate_event('SelectAll') }
       end
 
-      # Cmd-Q on macOS goes through Tk's own quit hook; route it to ours so the
-      # changes file is saved. (Best effort: harmless if the alias is refused.)
       def install_mac_quit
-        return unless MAC
-
-        Tk.tk_call('interp', 'alias', '', '::tk::mac::Quit', '', proc { quit })
-      rescue StandardError
-        nil
+        define_quit_hook if MAC
+      rescue StandardError => e
+        ::Transcript.show_cr("(Cmd-Q hook not installed: #{e.class}: #{e.message.lines.first.to_s.strip})")
       end
     end
   end

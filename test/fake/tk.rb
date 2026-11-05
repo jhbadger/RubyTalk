@@ -37,10 +37,40 @@ module Tk
       return '0' if first == 'winfo'
       return generate_event(args) if first == 'event' && args[1] == 'generate'
       return image_call(args) if first == 'image'
+      return chooser_call(args) if first == 'tk_chooseDirectory'
+      return define_proc(args) if first == 'proc'
+      return call_proc(first) if @procs&.key?(first)
 
       widget = FakeWidget.find(first)
       return widget_call(widget, args[1..]) if widget
 
+      ''
+    end
+
+    # The folder chooser: tests set Tk.chooser_answer ('' means Cancel) and read
+    # Tk.chooser_requests to see the options RubyTalk passed.
+    attr_accessor :chooser_answer
+
+    def chooser_requests
+      @chooser_requests ||= []
+    end
+
+    def chooser_call(args)
+      chooser_requests << args[1..]
+      chooser_answer.to_s
+    end
+
+    # Just enough Tcl to model `proc ::tk::mac::Quit {} {eval [wm protocol . WM_DELETE_WINDOW]}`.
+    def define_proc(args)
+      (@procs ||= {})[args[1]] = args[3]
+      ''
+    end
+
+    def call_proc(name)
+      body = @procs.fetch(name)
+      raise "fake Tk: unsupported proc body #{body.inspect}" unless body.include?('wm protocol . WM_DELETE_WINDOW')
+
+      root.protocols['WM_DELETE_WINDOW']&.call
       ''
     end
 
@@ -142,6 +172,16 @@ class FakeWidget
     @destroyed = true
   end
 
+  # `window.protocol('WM_DELETE_WINDOW') { ... }` registers a handler.
+  def protocol(name, *_rest, &block)
+    protocols[name] = block
+    self
+  end
+
+  def protocols
+    @protocols ||= {}
+  end
+
   def destroyed?
     @destroyed
   end
@@ -159,7 +199,12 @@ class FakeWidget
   end
 end
 
-class TkRoot < FakeWidget; end
+class TkRoot < FakeWidget
+  def initialize(*)
+    super
+    Tk.instance_variable_set(:@root, self) # like the real Tk.root: the most recent root window
+  end
+end
 class TkToplevel < FakeWidget; end
 class TkFrame < FakeWidget; end
 class TkLabel < FakeWidget; end

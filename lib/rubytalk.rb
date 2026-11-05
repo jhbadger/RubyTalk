@@ -16,8 +16,9 @@ module RubyTalk
 
     # Loads changes.rb from +dir+, then opens the environment (Transcript, a
     # System Browser and a Workspace). With selftest: true it runs the built-in
-    # GUI checks in a temporary directory instead and exits.
-    def run(dir: Dir.pwd, selftest: false)
+    # GUI checks in a temporary directory instead and exits. With choose: true it
+    # first asks (folder chooser) which folder to use, and quits quietly if you cancel.
+    def run(dir: Dir.pwd, selftest: false, choose: false)
       begin
         require_relative 'rubytalk/gui'
       rescue LoadError => e
@@ -27,6 +28,11 @@ module RubyTalk
         require 'tmpdir'
         dir = Dir.mktmpdir('rubytalk-selftest')
         at_exit { FileUtils.remove_entry(dir) if File.directory?(dir) }
+      end
+      if choose
+        dir = GUI.choose_directory or return
+        FileUtils.mkdir_p(dir)
+        Dir.chdir(dir)
       end
       setup(dir)
       GUI.start(selftest: selftest)
@@ -60,6 +66,7 @@ require_relative 'rubytalk/changes'
 require_relative 'rubytalk/reflection'
 require_relative 'rubytalk/compiler'
 require_relative 'rubytalk/search'
+require_relative 'rubytalk/preferences'
 require_relative 'rubytalk/icon'
 require_relative 'rubytalk/app_bundle'
 require_relative 'rubytalk/cli'

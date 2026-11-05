@@ -259,6 +259,41 @@ class CoreTest < Minitest::Test
     assert_empty @changes.entries
   end
 
+  # --- Preferences (folder chooser memory) --------------------------------
+
+  def with_home(home)
+    saved = ENV.values_at('HOME', 'XDG_CONFIG_HOME')
+    ENV['HOME'] = home
+    ENV['XDG_CONFIG_HOME'] = nil
+    yield
+  ensure
+    ENV['HOME'], ENV['XDG_CONFIG_HOME'] = saved
+  end
+
+  def test_preferences_default_and_remembered_directory
+    with_home(@dir) do
+      assert_equal @dir, RubyTalk::Preferences.last_directory, 'home when ~/RubyTalk does not exist'
+      FileUtils.mkdir_p(File.join(@dir, 'RubyTalk'))
+      assert_equal File.join(@dir, 'RubyTalk'), RubyTalk::Preferences.last_directory
+
+      mine = File.join(@dir, 'my image')
+      FileUtils.mkdir_p(mine)
+      RubyTalk::Preferences.remember_directory(mine)
+      assert_equal mine, RubyTalk::Preferences.last_directory
+      assert File.file?(RubyTalk::Preferences.last_directory_file)
+
+      FileUtils.remove_entry(mine)
+      assert_equal File.join(@dir, 'RubyTalk'), RubyTalk::Preferences.last_directory, 'a vanished folder is not offered'
+    end
+  end
+
+  def test_preferences_never_raise_when_unwritable
+    with_home('/nonexistent-home-for-rubytalk') do
+      assert_nil RubyTalk::Preferences.remember_directory('/tmp')
+      assert_equal '/nonexistent-home-for-rubytalk', RubyTalk::Preferences.last_directory
+    end
+  end
+
   # --- Autosave ---------------------------------------------------------
 
   def test_autosave_writes_each_change_and_keeps_one_startup_backup

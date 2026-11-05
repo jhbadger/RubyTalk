@@ -18,7 +18,7 @@ module RubyTalk
         current_line_without_selection key_binding_print_it transcript_window_receives_output
         error_opens_notifier inspector browser_navigation browser_accept_and_autosave
         browser_accept_by_key search_implementors_and_senders method_list_window
-        implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon
+        implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook
       ].freeze
 
       def initialize(main)
@@ -259,6 +259,23 @@ module RubyTalk
         assert(image && !image.empty?, 'no icon image was created (see the Transcript for the reason)')
         assert_equal 'photo', Tk.tk_call('image', 'type', image).to_s
         assert_equal 128, Tk.tk_call('image', 'width', image).to_i
+      end
+
+      # Cmd-Q and the app menu's Quit call ::tk::mac::Quit. Prove the hook reaches
+      # the window-close handler through real Tcl and Ruby/Tk callbacks (the old
+      # alias-based hook failed with "invalid command name rb_out c000NN"). The
+      # handler is swapped for a probe and then restored; nothing is quit.
+      def check_mac_quit_hook
+        return unless MAC
+
+        called = false
+        @main.root.protocol('WM_DELETE_WINDOW') { called = true }
+        begin
+          Tk.tk_call('::tk::mac::Quit')
+        ensure
+          @main.root.protocol('WM_DELETE_WINDOW') { GUI.quit }
+        end
+        assert(called, '::tk::mac::Quit did not reach the window-close handler')
       end
 
       def cleanup

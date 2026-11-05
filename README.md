@@ -33,16 +33,24 @@ build a double-clickable application bundle with it, like the Python/Tk `--build
 ```
 ruby bin/rubytalk --build-app ~/Applications      # builds ~/Applications/RubyTalk.app
 ruby bin/rubytalk --build-app . --link            # run the code in place (see below)
-ruby bin/rubytalk --build-app . --workdir ~/smalltalk-image
+ruby bin/rubytalk --build-app . --workdir ~/smalltalk-image   # always use that folder, never ask
 ruby bin/rubytalk --icon-png 512 icon.png         # just the icon, any size
 ```
 
-* **Where does `changes.rb` live when started from Finder?** Finder starts apps in `/`, so the
-  app starts RubyTalk with `--dir`: by default `~/RubyTalk` (created on first launch). Use
-  `--workdir` to choose another folder. From a terminal, `rubytalk --dir DIR` does the same.
+* **Which folder holds `changes.rb`?** Finder starts apps in `/`, so the app has to be told.
+  By default it asks: a folder chooser opens at startup, starting in the folder you used last
+  time (remembered in `~/Library/Application Support/RubyTalk/last_dir`; `~/.config/rubytalk/` on
+  Linux). Pick or create a folder; Cancel quits. Different folders are different images, each
+  with its own `changes.rb`. With `--workdir DIR` the app always uses DIR and never asks. From a
+  terminal: `rubytalk` uses the current directory, `rubytalk --dir DIR` a folder you name, and
+  `rubytalk --choose-dir` shows the chooser.
+* **Which image am I in?** The Transcript window's title is `RubyTalk: <folder>`, and its first
+  lines name the changes file, the working directory and where the code is running from.
+  On macOS, System > Reveal Changes File in Finder opens the folder.
 * **Copy or link?** By default the code is copied into the app, so it keeps working if you move
   or edit the source folder (rebuild to pick up changes). With `--link` the app runs the source
   where it is, so edits take effect on the next launch; it breaks if the folder moves.
+  Either way, "where the code runs from" is shown in the Transcript banner.
 * The launcher runs the Ruby that built it. For Homebrew Ruby it uses the stable
   `/opt/homebrew/opt/ruby/bin/ruby` path, so `brew upgrade ruby` does not break the app.
   If you switch Ruby versions or install the `tk` gem into a different Ruby, rebuild the app.
@@ -141,6 +149,7 @@ lib/rubytalk/source.rb       Ripper-based statement splitting and method-source 
 lib/rubytalk/changes.rb      ChangeSet: parse, replay, write changes.rb
 lib/rubytalk/compiler.rb     Accept, replay, remove method/class
 lib/rubytalk/search.rb       implementors / senders
+lib/rubytalk/preferences.rb  remembers the last folder chosen
 lib/rubytalk/icon.rb         the icon, drawn in code; PNG and .icns writers
 lib/rubytalk/app_bundle.rb   builds RubyTalk.app
 lib/rubytalk/cli.rb          command-line options
@@ -168,8 +177,9 @@ why the files under `gui/` do not use `# frozen_string_literal: true`. It also r
 1. Right-click in a code pane, a class list and a method list: the pop-up menus appear and
    their items work. (On a Mac, Control-click and two-finger click should both work.)
 2. Windows open staggered, not stacked exactly on top of each other.
-3. Quit from the System menu, closing the Transcript window, and Cmd-Q each end the program;
-   `changes.rb` is up to date afterwards.
+3. Quit from the System menu, closing the Transcript window, Cmd-Q and the application menu's
+   Quit each end the program with no error dialog; `changes.rb` is up to date afterwards.
+   (`--selftest` proves Cmd-Q reaches the close handler, but not that the program then exits.)
 4. Make a change, then kill the process (`kill -9`); restart: the change is still there.
 5. Type in the filter box above the class list: the list narrows as you type.
 

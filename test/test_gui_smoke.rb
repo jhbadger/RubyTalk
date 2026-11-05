@@ -52,6 +52,72 @@ class GuiSmokeTest < Minitest::Test
     Object.send(:remove_const, :RtMl) if defined?(RtMl)
   end
 
+  def with_home(home)
+    saved = ENV.values_at('HOME', 'XDG_CONFIG_HOME')
+    ENV['HOME'] = home
+    ENV['XDG_CONFIG_HOME'] = nil
+    yield
+  ensure
+    ENV['HOME'], ENV['XDG_CONFIG_HOME'] = saved
+  end
+
+  def test_choose_directory_remembers_the_answer_and_starts_in_the_last_one
+    with_home(@dir) do
+      chosen = File.join(@dir, 'image-a')
+      Tk.chooser_answer = chosen
+      assert_equal chosen, GUI.choose_directory
+      assert_equal chosen, File.read(Preferences.last_directory_file).strip
+
+      FileUtils.mkdir_p(chosen)
+      Tk.chooser_requests.clear
+      Tk.chooser_answer = ''
+      assert_nil GUI.choose_directory, 'Cancel returns nil'
+      assert_equal chosen, Tk.chooser_requests.last[1], 'the chooser starts in the last folder'
+    end
+  end
+
+  def test_run_with_choose_cancelled_opens_nothing
+    with_home(@dir) do
+      Tk.chooser_answer = ''
+      before = GUI.windows.size
+      RubyTalk.run(choose: true)
+      assert_equal before, GUI.windows.size
+    end
+  end
+
+  def test_run_with_choose_uses_the_chosen_folder
+    original = Dir.pwd
+    with_home(@dir) do
+      chosen = File.join(@dir, 'picked')
+      Tk.chooser_answer = chosen
+      RubyTalk.run(choose: true)
+      assert_equal File.realpath(chosen), File.realpath(Dir.pwd)
+      assert_equal File.join(chosen, 'changes.rb'), RubyTalk.changes.path
+      assert_equal [GUI::MainWindow, GUI::Browser, GUI::Workspace], GUI.windows.last(3).map(&:class)
+      assert_equal "RubyTalk: #{chosen}", GUI.windows.last(3).first.send(:title)
+    end
+  ensure
+    Dir.chdir(original)
+  end
+
+  def test_mac_quit_hook_runs_the_window_close_handler
+    main = GUI::MainWindow.new
+    called = false
+    main.root.protocol('WM_DELETE_WINDOW') { called = true }
+    GUI.define_quit_hook
+    Tk.tk_call(+'::tk::mac::Quit')
+    assert called, 'Cmd-Q / app-menu Quit must reach the close handler (which saves and quits)'
+  end
+
+  def test_window_title_and_banner_say_where_things_are
+    main = GUI::MainWindow.new
+    assert_equal "RubyTalk: #{@dir}", main.send(:title)
+    text = main.editor.contents
+    assert_includes text, "Changes file: #{File.join(@dir, 'changes.rb')}"
+    assert_includes text, "Working directory: #{Dir.pwd}"
+    assert_includes text, "Running code from: #{RubyTalk::LIB_DIR}"
+  end
+
   def test_main_window_shows_transcript_and_banner
     main = GUI::MainWindow.new
     text = main.editor.text

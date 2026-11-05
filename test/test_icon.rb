@@ -134,6 +134,23 @@ class IconTest < Minitest::Test
     assert File.size(png).positive?
   end
 
+  def test_default_launcher_asks_for_the_folder
+    app = RubyTalk::AppBundle.build(@dir)
+    launcher_path = File.join(app, 'Contents/MacOS/RubyTalk')
+    launcher = File.read(launcher_path)
+    assert_includes launcher, ' --choose-dir '
+    refute_match(/ --dir /, launcher)
+    out, status = Open3.capture2e('sh', launcher_path, '--help')
+    assert status.success?, out
+    assert_match(/--choose-dir/, out)
+  end
+
+  def test_cli_choose_dir_option
+    options = {}
+    RubyTalk::CLI.parser(options).parse(['--choose-dir'])
+    assert options[:choose]
+  end
+
   def test_launcher_passes_the_work_directory
     app = build
     launcher = File.read(File.join(app, 'Contents/MacOS/RubyTalk'))

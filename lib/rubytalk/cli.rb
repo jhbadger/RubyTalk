@@ -28,6 +28,9 @@ module RubyTalk
       OptionParser.new do |opts|
         opts.banner = "usage: rubytalk [options]\n  Run from the directory containing (or to contain) changes.rb."
         opts.on('--dir DIR', 'directory holding changes.rb (default: the current directory)') { |d| options[:dir] = d }
+        opts.on('--choose-dir', 'ask which directory to use with a folder chooser (starts in your last choice)') do
+          options[:choose] = true
+        end
         opts.on('--selftest', 'exercise the windows with real Tk in a temporary directory, then exit') do
           options[:selftest] = true
         end
@@ -36,7 +39,7 @@ module RubyTalk
         opts.on('--build-app [DIR]', 'build RubyTalk.app in DIR (default: current directory), then exit') do |dir|
           options[:build_app] = dir || Dir.pwd
         end
-        opts.on('--workdir DIR', 'with --build-app: where the app keeps changes.rb (default: ~/RubyTalk)') do |dir|
+        opts.on('--workdir DIR', 'with --build-app: always use DIR for changes.rb (default: the app asks at each start)') do |dir|
           options[:workdir] = dir
         end
         opts.on('--link', 'with --build-app: run the code in place instead of copying it into the app') do
@@ -62,15 +65,18 @@ module RubyTalk
       build[:workdir] = options[:workdir] if options[:workdir]
       app = AppBundle.build(options[:build_app], **build)
       puts app
-      warn "Move it to /Applications (or ~/Applications) if you like; it keeps changes.rb in " \
-           "#{options[:workdir] || File.join(Dir.home, AppBundle::NAME)}."
+      where = options[:workdir] ? "keeps changes.rb in #{options[:workdir]}" : 'asks which folder to use each time it starts'
+      warn "Move it to /Applications (or ~/Applications) if you like; it #{where}."
     end
 
     def start(options)
+      selftest = options[:selftest] || false
+      return RubyTalk.run(selftest: selftest, choose: true) if options[:choose] && !options[:dir]
+
       dir = File.expand_path(options[:dir] || Dir.pwd)
       FileUtils.mkdir_p(dir)
       Dir.chdir(dir)
-      RubyTalk.run(dir: dir, selftest: options[:selftest] || false)
+      RubyTalk.run(dir: dir, selftest: selftest)
     end
   end
 end
