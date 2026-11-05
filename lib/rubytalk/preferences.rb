@@ -3,10 +3,14 @@
 require 'fileutils'
 
 module RubyTalk
-  # Small per-user settings kept outside any image folder: just the folder
-  # RubyTalk was last run in. `rubytalk --last-dir` (what RubyTalk.app uses)
-  # starts there; the very first time it is your home directory.
+  # Small per-user settings kept outside any image folder:
+  #   last_dir  the folder RubyTalk was last run in (`rubytalk --last-dir`, which RubyTalk.app uses,
+  #             starts there; the very first time it is your home directory)
+  #   layout    the size and position each kind of window had last time ("browser 900x600+80+90")
   module Preferences
+    # Tk's geometry string: WIDTHxHEIGHT+X+Y (the offsets can be negative).
+    GEOMETRY = /\A(\d+)x(\d+)([+-]\d+)([+-]\d+)\z/.freeze
+
     module_function
 
     def directory
@@ -31,6 +35,31 @@ module RubyTalk
 
     def default_directory
       Dir.home
+    end
+
+    def layout_file
+      File.join(directory, 'layout')
+    end
+
+    # { "browser" => "900x600+80+90", ... }; lines that are not a kind and a geometry are ignored.
+    def layout
+      File.readlines(layout_file, chomp: true, encoding: 'UTF-8').each_with_object({}) do |line, entries|
+        kind, geometry = line.split(' ', 2)
+        entries[kind] = geometry.strip if kind && geometry && geometry.strip.match?(GEOMETRY)
+      end
+    rescue SystemCallError
+      {}
+    end
+
+    # Merge +entries+ ({ kind => geometry }) into the saved layout. Returns the merged layout, or nil
+    # if it could not be written (remembering is a convenience, never a reason to fail).
+    def save_layout(entries)
+      merged = layout.merge(entries.transform_keys(&:to_s).select { |_kind, geometry| geometry.to_s.match?(GEOMETRY) })
+      FileUtils.mkdir_p(directory)
+      File.write(layout_file, "#{merged.map { |kind, geometry| "#{kind} #{geometry}" }.join("\n")}\n", encoding: 'UTF-8')
+      merged
+    rescue SystemCallError
+      nil
     end
 
     def remember_directory(path)

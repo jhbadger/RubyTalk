@@ -21,7 +21,7 @@ module RubyTalk
         implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
         interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
         versions_window hierarchy_browser debugger class_comment test_runner find_and_replace
-        auto_indent_and_brackets
+        auto_indent_and_brackets remembered_window_layout
       ].freeze
 
       def initialize(main)
@@ -464,6 +464,28 @@ module RubyTalk
         tags_at = ->(index) { Tk.tk_call(path, 'tag', 'names', index).to_s.split }
         assert(tags_at.call('1.3').include?('rt_bracket'), "the opening bracket is not marked: #{tags_at.call('1.3').inspect}")
         assert(tags_at.call('1.5').include?('rt_bracket'), 'the closing bracket is not marked')
+      end
+
+      # A window's size and position are saved and the next window of its kind opens the same size. Uses
+      # a temporary home so your real saved layout is never touched.
+      def check_remembered_window_layout
+        original_home = ENV['HOME']
+        Dir.mktmpdir('rubytalk-home') do |home|
+          ENV['HOME'] = home
+          GUI.reset_layout_state
+          first = Workspace.new(text: 'layout')
+          Tk.tk_call('wm', 'geometry', first.window.path, '431x287+90+110')
+          update
+          GUI.save_layout
+          saved = Preferences.layout['workspace']
+          assert(saved&.start_with?('431x287'), "the layout was not saved: #{saved.inspect}")
+          second = Workspace.new(text: 'again')
+          update
+          assert_equal '431x287', Tk.tk_call('wm', 'geometry', second.window.path).to_s[/\A\d+x\d+/]
+        end
+      ensure
+        ENV['HOME'] = original_home
+        GUI.reset_layout_state
       end
 
       def cleanup

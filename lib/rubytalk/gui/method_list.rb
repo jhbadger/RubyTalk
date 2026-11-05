@@ -15,7 +15,7 @@ module RubyTalk
         @changes = RubyTalk.changes
         @window = TkToplevel.new
         GUI.window_title(@window, "#{title} (#{hits.size})")
-        GUI.place(@window)
+        GUI.place(@window, kind: :method_list)
         @list = SelectableList.new(@window, width: 72, height: 10) { |hit| hit_selected(hit) }
         @list.frame.pack(side: 'top', fill: 'x')
         @list.set(hits, hits.map(&:label))

@@ -23,7 +23,7 @@ module RubyTalk
       def initialize(text: nil, title: 'Workspace')
         @window = TkToplevel.new
         GUI.window_title(@window, title)
-        GUI.place(@window)
+        GUI.place(@window, kind: :workspace)
         scope = Evaluator.new_binding
         @editor = CodeEditor.new(@window, width: 80, height: 20, highlight: true,
                                           evaluator: ->(source) { Evaluator.evaluate(source, scope, file: 'workspace') })

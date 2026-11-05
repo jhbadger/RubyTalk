@@ -57,8 +57,8 @@ module Tk
       self.last_title = args[3] if args[0] == 'wm' && args[1] == 'title'
       first = args.first.to_s
       return (message_answer || 'yes') if first == 'tk_messageBox'
-      return (rgb_answer || '65535 65535 65535') if first == 'winfo' && args[1] == 'rgb'
-      return '0' if first == 'winfo'
+      return winfo_call(args) if first == 'winfo'
+      return wm_call(args) if first == 'wm' && args[1] == 'geometry'
       return generate_event(args) if first == 'event' && args[1] == 'generate'
       return image_call(args) if first == 'image'
       return chooser_call(args) if first == 'tk_chooseDirectory'
@@ -82,6 +82,39 @@ module Tk
     def chooser_call(args)
       chooser_requests << args[1..]
       chooser_answer.to_s
+    end
+
+    # Window geometry: `wm geometry path spec` sets it, `wm geometry path` returns "WxH+X+Y" (a window
+    # that was only given a position has a 100x100 size, as if the widgets decided it).
+    def wm_call(args)
+      @geometries ||= {}
+      if args.size >= 4
+        @geometries[args[2]] = args[3]
+        ''
+      else
+        spec = @geometries.fetch(args[2], '+0+0')
+        spec.start_with?('+', '-') ? "100x100#{spec}" : spec
+      end
+    end
+
+    attr_writer :screen_width, :screen_height
+
+    def screen_width
+      @screen_width ||= 1440
+    end
+
+    def screen_height
+      @screen_height ||= 900
+    end
+
+    def winfo_call(args)
+      case args[1]
+      when 'rgb' then rgb_answer || '65535 65535 65535'
+      when 'screenwidth' then screen_width.to_s
+      when 'screenheight' then screen_height.to_s
+      when 'exists' then FakeWidget.find(args[2])&.destroyed? == false ? '1' : '0'
+      else '0'
+      end
     end
 
     # Just enough Tcl to model `proc ::tk::mac::Quit {} {eval [wm protocol . WM_DELETE_WINDOW]}`.
@@ -218,7 +251,7 @@ class FakeWidget
   end
 
   def destroyed?
-    @destroyed
+    !!@destroyed
   end
 
   def pack(*)

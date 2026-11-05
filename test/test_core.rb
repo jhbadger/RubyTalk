@@ -623,6 +623,28 @@ class CoreTest < Minitest::Test
     refute_match(/not reached/, out)
   end
 
+  def test_layout_round_trip_merge_and_bad_lines
+    with_home(@dir) do
+      assert_empty RubyTalk::Preferences.layout
+      saved = RubyTalk::Preferences.save_layout(browser: '900x600+80+90', 'workspace' => '500x400-10+20')
+      assert_equal({ 'browser' => '900x600+80+90', 'workspace' => '500x400-10+20' }, saved)
+
+      RubyTalk::Preferences.save_layout(browser: '800x500+0+0', bad: 'nonsense', worse: '10x10')
+      assert_equal({ 'browser' => '800x500+0+0', 'workspace' => '500x400-10+20' }, RubyTalk::Preferences.layout,
+                   'a new value replaces the old, other kinds are kept, invalid geometries are dropped')
+
+      File.write(RubyTalk::Preferences.layout_file, "browser 1x1+1+1\njunk\nno geometry\ninspector abc\ntests 7x8+9+10\n")
+      assert_equal({ 'browser' => '1x1+1+1', 'tests' => '7x8+9+10' }, RubyTalk::Preferences.layout)
+    end
+  end
+
+  def test_layout_never_raises_when_unwritable
+    with_home('/nonexistent-home-for-rubytalk') do
+      assert_nil RubyTalk::Preferences.save_layout(browser: '1x1+1+1')
+      assert_empty RubyTalk::Preferences.layout
+    end
+  end
+
   def test_preferences_never_raise_when_unwritable
     with_home('/nonexistent-home-for-rubytalk') do
       assert_nil RubyTalk::Preferences.remember_directory('/tmp')

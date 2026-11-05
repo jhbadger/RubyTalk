@@ -16,7 +16,7 @@ module RubyTalk
         @fields = collect_fields(object)
         @window = TkToplevel.new
         GUI.window_title(@window, "Inspector: #{brief(object)}")
-        GUI.place(@window)
+        GUI.place(@window, kind: :inspector)
         build
         GUI.build_menubar(@window, -> { @console })
         GUI.windows << self

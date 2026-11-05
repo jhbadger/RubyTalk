@@ -17,12 +17,20 @@ class GuiSmokeTest < Minitest::Test
   include RubyTalk
 
   def setup
+    @saved_home = ENV.values_at('HOME', 'XDG_CONFIG_HOME')
     Transcript.clear
     @dir = Dir.mktmpdir('rubytalk-gui')
     RubyTalk.changes = ChangeSet.new(File.join(@dir, 'changes.rb'))
+    # Settings (last folder, window layout) go to a temporary home, never the real one.
+    ENV['HOME'] = @dir
+    ENV['XDG_CONFIG_HOME'] = nil
+    GUI.reset_layout_state
   end
 
   def teardown
+    ENV['HOME'], ENV['XDG_CONFIG_HOME'] = @saved_home
+    Tk.screen_width = nil
+    Tk.screen_height = nil
     Evaluator.driver = nil
     Tk.update_hook = nil
     FileUtils.remove_entry(@dir)
@@ -129,6 +137,81 @@ class GuiSmokeTest < Minitest::Test
     assert_equal RubyTalk::Highlighter::PALETTES[:light][:keyword], light.text.tag_options['rt_keyword']['-foreground']
   ensure
     Tk.rgb_answer = nil
+  end
+
+  # --- remembered window layout ---------------------------------------------------
+
+  def geometry_of(window)
+    tk('wm', 'geometry', window.path).to_s
+  end
+
+  def set_geometry(window, spec)
+    tk('wm', 'geometry', window.path, spec)
+  end
+
+  def test_windows_are_staggered_without_a_saved_layout
+    first = GUI::Workspace.new(text: 'a').window
+    second = GUI::Workspace.new(text: 'b').window
+    refute_equal geometry_of(first), geometry_of(second)
+  end
+
+  def test_saved_layout_is_used_for_the_first_window_of_a_kind_and_nudged_for_the_next
+    Preferences.save_layout(workspace: '500x400+100+120')
+    first = GUI::Workspace.new(text: 'a').window
+    second = GUI::Workspace.new(text: 'b').window
+    assert_equal '500x400+100+120', geometry_of(first)
+    assert_equal '500x400+128+148', geometry_of(second), 'a second window of the kind is nudged'
+    browser = GUI::Browser.new
+    assert_match(/\A100x100\+\d+\+\d+\z/, geometry_of(ivar(browser, :@window)), 'a kind with no saved layout is staggered')
+  end
+
+  def test_saved_geometry_is_kept_on_screen
+    Tk.screen_width = 1000
+    Tk.screen_height = 700
+    Preferences.save_layout(workspace: '3000x2000+5000+900', browser: '400x300-900-50')
+    assert_equal '960x620+900+640', geometry_of(GUI::Workspace.new(text: 'a').window), 'smaller than the screen, a corner showing'
+    assert_equal '400x300-300+0', geometry_of(ivar(GUI::Browser.new, :@window)), 'no more than all but 100 pixels off the left'
+  end
+
+  def test_layout_is_saved_on_quit_one_entry_per_kind_from_the_newest_window
+    first = GUI::Workspace.new(text: 'a').window
+    set_geometry(first, '300x200+10+10')
+    second = GUI::Workspace.new(text: 'b').window
+    set_geometry(second, '640x480+50+60')
+    GUI::MainWindow.new
+    GUI.quit
+    layout = Preferences.layout
+    assert_equal '640x480+50+60', layout['workspace']
+    assert layout.key?('transcript')
+  end
+
+  def test_closing_a_window_remembers_where_it_was
+    window = GUI::Workspace.new(text: 'a').window
+    set_geometry(window, '321x234+11+22')
+    window.protocols['WM_DELETE_WINDOW'].call
+    assert window.destroyed?
+    GUI.save_layout
+    assert_equal '321x234+11+22', Preferences.layout['workspace'], 'kept although no window of that kind is open now'
+  end
+
+  def test_the_transcript_keeps_its_quit_handler
+    main = GUI::MainWindow.new
+    quit_called = false
+    GUI.stub(:quit, -> { quit_called = true }) { main.root.protocols['WM_DELETE_WINDOW'].call }
+    assert quit_called, 'closing the Transcript quits; it is not just another window'
+  end
+
+  def test_change_directory_saves_the_layout_first
+    set_geometry(GUI::Workspace.new(text: 'a').window, '700x500+30+40')
+    change_directory_with(File.join(@dir, 'elsewhere'))
+    assert_equal '700x500+30+40', Preferences.layout['workspace']
+  end
+
+  def test_a_failing_layout_save_does_not_stop_quitting
+    ENV['HOME'] = '/nonexistent-home-for-rubytalk'
+    GUI::Workspace.new(text: 'a')
+    GUI.quit # must not raise
+    assert Tk.root.destroyed?
   end
 
   # --- auto-indent and bracket matching -----------------------------------------

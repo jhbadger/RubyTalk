@@ -183,6 +183,16 @@ indentation auto-indent gave it, so existing code you click through is never rew
 the cursor is highlighted together with its partner (brackets inside strings, comments, symbols and regexps
 do not count). It is a heuristic built on Ruby's lexer, not a parser: it favours predictable behaviour.
 
+**Window layout.** Each kind of window (Transcript, Browser, Workspace, Inspector, Method List, Versions,
+Debugger, test results) remembers its size and position and reopens there next time. It is saved when you
+quit, when you switch directory, and when you close a window with its close button; a second window of the
+same kind opens nudged down and right so they do not coincide. A saved position is clamped to the current
+screen (smaller than the screen, at least 100 pixels visible), so unplugging a monitor never loses a window.
+The layout is per user, not per folder: it lives next to `last_dir` (`~/Library/Application
+Support/RubyTalk/layout` on macOS, `~/.config/rubytalk/layout` elsewhere) as lines like
+`browser 900x600+80+90`; delete the file to start afresh. Windows closed with their own Close button (the
+Debugger, results windows) are not remembered at that moment, only at quit if still open.
+
 **Versions.** Accept no longer loses the old definition. Right-click a method (in the Browser or a
 Method List) > **Versions...** to see, newest first: the current definition, every earlier version
 kept in `changes.history`, and the **original library method** if RubyTalk has overridden or removed

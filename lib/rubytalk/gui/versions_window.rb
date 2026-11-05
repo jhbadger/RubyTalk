@@ -21,7 +21,7 @@ module RubyTalk
         @changes = RubyTalk.changes
         @window = TkToplevel.new
         GUI.window_title(@window, "Versions of #{title}")
-        GUI.place(@window)
+        GUI.place(@window, kind: :versions)
         build
         GUI.build_menubar(@window, -> { @code })
         GUI.windows << self

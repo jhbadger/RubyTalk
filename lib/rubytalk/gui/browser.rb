@@ -32,7 +32,7 @@ module RubyTalk
         @hierarchy_root = target if hierarchy && target.is_a?(Module) && Reflection.name_of(target)
         @window = TkToplevel.new
         GUI.window_title(@window, @hierarchy_root ? "Hierarchy of #{Reflection.name_of(@hierarchy_root)}" : 'System Browser')
-        GUI.place(@window)
+        GUI.place(@window, kind: :browser)
         build
         GUI.build_menubar(@window, -> { @code })
         GUI.windows << self
