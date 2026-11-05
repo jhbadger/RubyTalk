@@ -21,7 +21,7 @@ module RubyTalk
         implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
         interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
         versions_window hierarchy_browser debugger class_comment test_runner find_and_replace
-        auto_indent_and_brackets remembered_window_layout
+        auto_indent_and_brackets remembered_window_layout file_out_and_in
       ].freeze
 
       def initialize(main)
@@ -486,6 +486,27 @@ module RubyTalk
       ensure
         ENV['HOME'] = original_home
         GUI.reset_layout_state
+      end
+
+      # File a class out to plain Ruby, remove it, file the file back in: the class and its method return and
+      # are recorded again. (The dialogs need a person; this uses explicit paths.)
+      def check_file_out_and_in
+        changes = RubyTalk.changes
+        Compiler.accept("# Filed out in the self-test.\nclass RtSelfEx\nend\n", changes: changes)
+        Compiler.accept("def hello\n  :hello\nend\n", klass: ::RtSelfEx, changes: changes)
+        path = File.join(File.dirname(changes.path), 'rt_self_ex.rb')
+        GUI.file_out_class(::RtSelfEx, path)
+        text = File.read(path)
+        assert(Source.syntax_error(text).nil?, 'the filed-out file is not valid Ruby')
+        assert(text.include?('def hello'), 'the method is missing from the file')
+        Compiler.remove_class(::RtSelfEx, changes)
+        assert(!Object.const_defined?(:RtSelfEx), 'the class should be gone')
+        summary = GUI.file_in(path)
+        assert(summary&.ok?, "file in failed: #{summary&.errors.inspect}")
+        assert_equal :hello, ::RtSelfEx.new.hello
+        assert(changes.find_method('RtSelfEx', :instance, 'hello'), 'the method was not recorded as a change')
+      ensure
+        Object.send(:remove_const, :RtSelfEx) if Object.const_defined?(:RtSelfEx)
       end
 
       def cleanup

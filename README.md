@@ -193,6 +193,23 @@ Support/RubyTalk/layout` on macOS, `~/.config/rubytalk/layout` elsewhere) as lin
 `browser 900x600+80+90`; delete the file to start afresh. Windows closed with their own Close button (the
 Debugger, results windows) are not remembered at that moment, only at quit if still open.
 
+**File out and file in.** Move code between RubyTalk and ordinary `.rb` files.
+**System > File Out Changes as Ruby...** writes everything recorded in `changes.rb` as plain, readable Ruby:
+classes first, their methods grouped under `class Foo ... end`, class-side methods in `class << self`,
+modules as `module`, and removed library methods as guarded `remove_method` lines. The file needs no
+RubyTalk: `load` or `require` it, or send it to someone. Class list right-click > **File out class...** does
+the same for one class. Without a window: `rubytalk --dir FOLDER --export FILE`.
+**System > File In...** loads a `.rb` file *and records it*: a class written the ordinary way (a one-line
+header, `end` last) is taken apart, so each method becomes its own change you can browse, version and revert;
+`def self.x` and `class << self` become class-side methods; other statements in the body (`attr_reader`,
+`include`, nested classes) are recorded as class-body statements; a method in `class String` is added to the
+existing class; a class with an unusual header (`class Foo < Struct.new(:a)`) or written on one line is
+recorded as a whole. Code outside any class (a `require`, a `puts`) is run but not recorded. A file in
+RubyTalk's own changes format (System > Show Changes) is replayed and recorded as it is. Nothing is changed
+if the file has a syntax error; a statement that fails is reported and the rest carry on. The Transcript
+shows what was done, e.g. `1 class created, 6 methods, 2 other class statements, 1 top-level statement run`.
+The dialogs start in the folder of the current image.
+
 **Versions.** Accept no longer loses the old definition. Right-click a method (in the Browser or a
 Method List) > **Versions...** to see, newest first: the current definition, every earlier version
 kept in `changes.history`, and the **original library method** if RubyTalk has overridden or removed
@@ -261,6 +278,7 @@ lib/rubytalk/stack.rb        what the debugger shows: frames, source, variables,
 lib/rubytalk/test_runner.rb  runs Minitest classes and reports plain outcomes
 lib/rubytalk/finder.rb       text search and replacement behind Find (no GUI)
 lib/rubytalk/indenter.rb     auto-indent rules (no GUI)
+lib/rubytalk/exchange.rb     file out / file in of plain Ruby (no GUI)
 lib/rubytalk/bracket_matcher.rb  matching brackets via the lexer (no GUI)
 lib/rubytalk/highlighter.rb  syntax highlighting: Ripper tokens to coloured spans (no GUI)
 lib/rubytalk/preferences.rb  remembers the last folder chosen

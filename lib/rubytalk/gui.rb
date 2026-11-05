@@ -309,6 +309,62 @@ module RubyTalk
         TestResultsWindow.new(title, report, runner: runner, filter: filter) if report
       end
 
+      # System > File Out Changes as Ruby...: everything recorded in changes.rb, as plain Ruby.
+      # +path+ skips the dialog (tests, scripts).
+      def file_out_changes(path = nil)
+        path ||= choose_save_file('rubytalk_changes.rb') or return
+        write_filed_out(Exchange.all_source, path, 'all changes')
+      end
+
+      # Class list > File out class...: the changes made to +klass+, as plain Ruby.
+      def file_out_class(klass, path = nil)
+        name = Reflection.name_of(klass)
+        text = Exchange.class_source(klass)
+        return ::Transcript.show_cr("Nothing to file out: #{name} has no recorded changes.") unless text
+
+        path ||= choose_save_file("#{name.gsub('::', '_').gsub(/([a-z\d])([A-Z])/, '\\1_\\2').downcase}.rb") or return
+        write_filed_out(text, path, name)
+      end
+
+      # System > File In...: plain Ruby (taken apart into per-method changes) or RubyTalk's own
+      # changes format. Returns the Exchange::Summary, or nil if cancelled.
+      def file_in(path = nil)
+        path ||= choose_open_file or return
+        summary = Exchange.file_in_path(path)
+        ::Transcript.show_cr("Filed in #{File.basename(path)}: #{summary}")
+        summary.errors.each { |error| ::Transcript.show_cr("  #{error}") }
+        summary
+      rescue SystemCallError => e
+        ::Transcript.show_cr("Could not read #{path}: #{e.message}")
+        nil
+      end
+
+      def write_filed_out(text, path, what)
+        File.write(path, text, encoding: 'UTF-8')
+        ::Transcript.show_cr("Filed out #{what} to #{path}")
+        path
+      rescue SystemCallError => e
+        ::Transcript.show_cr("Could not write #{path}: #{e.message}")
+        nil
+      end
+
+      # The file dialogs start in the folder of the current image. nil if cancelled.
+      def choose_save_file(initial_name)
+        chosen = Tk.tk_call('tk_getSaveFile', '-initialfile', initial_name.dup, '-defaultextension', '.rb',
+                            '-initialdir', dialog_directory, '-title', 'File out as Ruby').to_s
+        chosen.empty? ? nil : chosen
+      end
+
+      def choose_open_file
+        chosen = Tk.tk_call('tk_getOpenFile', '-initialdir', dialog_directory, '-title', 'File in',
+                            '-filetypes', '{{Ruby files} .rb} {{All files} *}').to_s
+        chosen.empty? ? nil : chosen
+      end
+
+      def dialog_directory
+        RubyTalk.changes ? File.dirname(RubyTalk.changes.path) : Dir.pwd
+      end
+
       # Run an implementors/senders search and show the results in a Method List.
       def show_method_list(kind, selector)
         ::Transcript.show_cr("Searching for #{kind} of #{selector}...")
@@ -422,6 +478,8 @@ module RubyTalk
           Tk.tk_call('raise', '.')
         end
         add_item(system, 'Run All User Tests') { run_all_user_tests }
+        add_item(system, 'File In...') { file_in }
+        add_item(system, 'File Out Changes as Ruby...') { file_out_changes }
         add_item(system, 'Show Changes (copy)') do
           Workspace.new(text: RubyTalk.changes.to_text, title: 'Changes (a copy: edits here are not saved)')
         end

@@ -88,6 +88,7 @@ module RubyTalk
                                ['New test class', -> { new_test_class }],
                                ['New subclass', -> { new_subclass }],
                                ['Hierarchy of this class', -> { show_hierarchy }],
+                               ['File out class...', -> { file_out_class }],
                                ['Remove class', -> { remove_class }]])
         @methods.context_menu([['Run this test', -> { run_test }],
                                ['Versions...', -> { show_versions }],
@@ -242,6 +243,10 @@ module RubyTalk
 
       def show_hierarchy
         Browser.open(@klass, hierarchy: true) if @klass
+      end
+
+      def file_out_class
+        GUI.file_out_class(@klass) if @klass
       end
 
       def run_class_tests

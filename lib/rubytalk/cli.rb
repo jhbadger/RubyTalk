@@ -16,7 +16,9 @@ module RubyTalk
       args = argv.reject { |arg| arg.start_with?('-psn_') }
       rest = parser(options).parse(args)
 
-      if options[:icon_png]
+      if options[:export]
+        export(options)
+      elsif options[:icon_png]
         write_icon(options[:icon_png], rest.first || "#{AppBundle::NAME}.png")
       elsif options[:build_app]
         build_app(options)
@@ -32,6 +34,7 @@ module RubyTalk
         opts.on('--last-dir', 'use the folder RubyTalk was last run in (your home directory the first time)') do
           options[:last] = true
         end
+        opts.on('--export FILE', "write the folder's changes.rb as plain Ruby to FILE, then exit") { |file| options[:export] = file }
         opts.on('--selftest', 'exercise the windows with real Tk in a temporary directory, then exit') do
           options[:selftest] = true
         end
@@ -54,6 +57,13 @@ module RubyTalk
           exit
         end
       end
+    end
+
+    # File out without opening any window: the folder's changes as plain Ruby.
+    def export(options)
+      RubyTalk.setup(resolve_directory(options))
+      File.write(options[:export], Exchange.all_source, encoding: 'UTF-8')
+      puts options[:export]
     end
 
     def write_icon(size, path)

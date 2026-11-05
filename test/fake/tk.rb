@@ -62,6 +62,7 @@ module Tk
       return generate_event(args) if first == 'event' && args[1] == 'generate'
       return image_call(args) if first == 'image'
       return chooser_call(args) if first == 'tk_chooseDirectory'
+      return dialog_call(args) if %w[tk_getSaveFile tk_getOpenFile].include?(first)
       return define_proc(args) if first == 'proc'
       return call_proc(first) if @procs&.key?(first)
 
@@ -69,6 +70,19 @@ module Tk
       return widget_call(widget, args[1..]) if widget
 
       ''
+    end
+
+    # The file dialogs (tk_getSaveFile / tk_getOpenFile): tests set Tk.dialog_answer ('' is Cancel) and read
+    # Tk.dialog_requests.
+    attr_accessor :dialog_answer
+
+    def dialog_requests
+      @dialog_requests ||= []
+    end
+
+    def dialog_call(args)
+      dialog_requests << args
+      dialog_answer.to_s
     end
 
     # The folder chooser: tests set Tk.chooser_answer ('' means Cancel) and read

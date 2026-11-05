@@ -93,6 +93,16 @@ module RubyTalk
       end
     end
 
+    # Accept +statement+ as a statement in the class body (or its class side) even if it is a nested
+    # class or module, which Accept would otherwise define at the top level. Used by File In.
+    def accept_body(statement, klass, side, changes)
+      Evaluator.with_transcript_io do
+        define_member(statement, Source::Description.new(:other, nil), klass, side, changes)
+      end
+    rescue *Evaluator::RECOVERABLE => e
+      Outcome.new(ok: false, message: Evaluator.format_error(e), error: e)
+    end
+
     def define_member(statement, description, klass, side, changes)
       target = Reflection.name_of(klass)
       case description.kind
