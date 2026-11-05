@@ -310,27 +310,41 @@ why the files under `gui/` do not use `# frozen_string_literal: true`. It also r
 
 1. Right-click in a code pane, a class list and a method list: the pop-up menus appear and
    their items work. (On a Mac, Control-click and two-finger click should both work.)
-2. Windows open staggered, not stacked exactly on top of each other.
+2. Windows open staggered, not stacked exactly on top of each other, until you have a saved layout.
 3. Quit from the System menu, closing the Transcript window, Cmd-Q and the application menu's
    Quit each end the program with no error dialog; `changes.rb` is up to date afterwards.
    (`--selftest` proves Cmd-Q reaches the close handler, but not that the program then exits.)
 4. Make a change, then kill the process (`kill -9`); restart: the change is still there.
 5. Type in the filter box above the class list: the list narrows as you type.
-6. Syntax colours look right in your appearance (light and dark): keywords, strings, comments are
-   all legible, and selected text stays readable.
-7a. **Debugger:** in a Workspace run `n = 21; n.fetch`, then `x = 5; 1 / 0`: a window shows the error,
-    the stack, `x = 5` in the variables, and the console answers `x + 1` with 6. Right-click or
-    double-click a frame of a method you defined > Edit Method opens it in a Browser.
-7. **Stop:** in a Workspace type `loop {}`, press Cmd-D, then Cmd-. (or System > Interrupt Running
-   Code): the window stays responsive while it runs (try moving it, opening the System menu), the
-   title says "running", and Stop ends it with "Interrupted." in the Transcript. Try
-   `Transcript.show_cr('hi'); sleep 2; :done` and watch the output appear before the 2 seconds end.
-8. **Versions:** in the Browser pick a method you defined, Accept a changed version, right-click >
-   Versions...: both versions are listed; tick the diff box; Revert; the browser shows the old text.
-9. **Hierarchy:** right-click a class > Hierarchy of this class: the list starts at BasicObject
-   and the class you chose is selected and shown.
-10. System > Change Directory...: pick a folder, confirm; RubyTalk restarts there (check the
-   window title). Quit and start the app again from Finder: it opens in that folder.
+6. Syntax colours, the find highlight and the bracket highlight look right in your appearance (light and
+   dark), and selected text stays readable.
+7. **Debugger:** in a Workspace run `x = 5; 1 / 0`: a window shows the error, the stack, `x = 5` in the
+   variables, and the console answers `x + 1` with 6. For a method you defined, double-click its frame (or
+   Edit Method): it opens in a Browser; fix it, Accept, then Run Again.
+8. **Stop:** in a Workspace type `loop {}`, press Cmd-D, then Cmd-. (or System > Interrupt Running Code): the
+   window stays responsive while it runs (try moving it, opening the System menu), the title says "running",
+   and Stop ends it with "Interrupted." in the Transcript. Try `Transcript.show_cr('hi'); sleep 2; :done` and
+   watch the output appear before the 2 seconds end.
+9. **Versions:** in the Browser pick a method you defined, Accept a changed version, right-click > Versions...:
+   both versions are listed; tick the diff box; Revert; the browser shows the old text.
+10. **Hierarchy:** right-click a class > Hierarchy of this class: the list starts at BasicObject and the class
+    you chose is selected and shown.
+11. **Class comment:** select a class, type `# Some words.` above `class`, Accept, open a second Browser on it:
+    the comment is there.
+12. **Tests:** make a class with a `FooTest < Minitest::Test` (class list > New test class), give it a passing
+    and a failing test, right-click the class > Run tests: red bar, the failure first with its message; fix
+    the test, Run Failures: green bar.
+13. **Find:** Cmd-F in a Workspace, type a word that occurs twice: both are coloured, the first selected;
+    Cmd-G steps and wraps; Replace All with a replacement; Cmd-Z undoes it in one step; Escape closes.
+14. **Indent:** type `def foo`, Return (the next line is indented), `if x`, Return, `a`, Return, `end` (it
+    snaps back two spaces); put the cursor just after a `)` and see it and its `(` highlighted.
+15. **Layout:** move and resize the Browser, quit, start again: it opens where you left it. (Delete
+    `~/Library/Application Support/RubyTalk/layout` to start afresh.)
+16. **File out / in:** make a class with a couple of methods, System > File Out Changes as Ruby..., and check the
+    file needs no RubyTalk (in plain `irb`: `load 'thatfile.rb'`); then in RubyTalk remove the class and System >
+    File In... the file: the class and its methods are back in the Browser as individual methods.
+17. System > Change Directory...: pick a folder, confirm; RubyTalk restarts there (check the window title).
+    Quit and start the app again from Finder: it opens in that folder.
 
 ## Known limits
 
@@ -338,5 +352,7 @@ why the files under `gui/` do not use `# frozen_string_literal: true`. It also r
 * Stop cannot interrupt one long C call (see "Running code and Stop"); and code that touches Tk
   directly from a do it must hand the work to `RubyTalk::GUI.on_main { ... }` itself.
 * Versions cover methods, not class definitions or class-body statements.
-* No class comments or protocol names of your own: Ruby has no equivalent, so the protocol
-  list is Ruby's visibility.
+* No protocol names of your own: Ruby has no equivalent, so the protocol list is Ruby's visibility.
+* File in decomposes classes written in the ordinary way (one-line header, `end` last). Anything fancier
+  is recorded whole, so it appears as a class definition rather than as separate methods.
+* Find marks at most 1000 matches on screen (all are counted and replaced).
