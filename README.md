@@ -83,6 +83,7 @@ available to later evaluations in the same workspace.
 | Implementors of it | Cmd-M | Ctrl-M | selection (or word at cursor) as a method name: who defines it |
 | Senders of it | Cmd-N | Ctrl-N   | selection (or word at cursor) as a method name: who calls it |
 | Accept     | Cmd-S    | Ctrl-S   | (Browser code pane) compile and log the code           |
+| Stop       | Cmd-.    | Ctrl-.   | interrupt the running do it (also System > Interrupt Running Code) |
 
 These work in every text pane (Transcript, Workspace, Browser, Inspector) and from the
 right-click menu. An error in a do it opens an error window (message + backtrace, with
@@ -104,6 +105,19 @@ changed through RubyTalk.
   (`attr_accessor`, `include`, ...) runs in the class body. Built-in classes can be extended
   this way. Right-click: New subclass, Remove class, Remove method.
 
+**Running code and Stop.** A do it runs on a worker thread while the windows stay alive, so a
+runaway `loop {}` cannot freeze RubyTalk: press **Cmd-.** (System > Interrupt Running Code) and the
+code raises `RubyTalk::Evaluator::Interrupted`. That is deliberately not a `StandardError`, so a
+plain `rescue => e` in your code cannot swallow it, and `ensure` blocks still run. If the code
+catches everything (`rescue Exception`) and carries on, press Stop again within 3 seconds and the
+thread is killed. Ctrl-C in the terminal that started RubyTalk does the same as Stop. The
+Transcript's title bar says "running" while code runs; a second do it is refused until the first
+ends; quitting while code runs stops it. Code that does heavy work inside a single C call (a huge
+integer power, say) cannot be interrupted until that call returns. Tk itself must only be used from
+the main thread, so output from your code's threads and windows your code opens
+(`RubyTalk::GUI::Inspector.new(x)` inside a do it) are handed over to the main thread automatically;
+code that calls Tk directly from a do it is on its own.
+
 **Implementors and senders** open a Method List: the matching methods on top, the selected
 method's source below (editable; Accept recompiles it where it lives). Double-click, or
 right-click > Browse, to open the System Browser on it. Also in the Browser's method list
@@ -116,6 +130,26 @@ right-click menu.
   A local variable with the same name also matches, calls made through `send` with a
   computed name are invisible, methods built by `define_method` are found only if their
   source can be read, and `[]`/`[]=` are not searched.
+
+**Versions.** Accept no longer loses the old definition. Right-click a method (in the Browser or a
+Method List) > **Versions...** to see, newest first: the current definition, every earlier version
+kept in `changes.history`, and the **original library method** if RubyTalk has overridden or removed
+one in this session or an earlier one's changes were replayed. Select one to read it; tick *Show what
+reverting would change* for a line diff against the current version (`-` removed, `+` added); **Revert**
+makes the selected version current. What a revert replaces is kept too, so a revert can be undone.
+Reverting to the original also works for built-in methods written in C, and keeps their visibility.
+**Remove method** follows the same idea: if you had overridden a method that already existed, it
+restores the original; a method you created is forgotten (its source stays under Versions); removing
+a library method nobody overrode is logged so it persists, and Versions can bring it back.
+`changes.history` uses the same chunk format as `changes.rb`, appended to as you work (at most the
+newest 100 versions of a method are shown); delete it to forget the history.
+
+**Hierarchy.** Class list right-click > **Hierarchy of this class**, or Edit > **Hierarchy of it**
+(select a class name or any expression; a non-class gives its class's hierarchy). The window is a
+normal browser whose class list shows the superclass chain from BasicObject down, then **all**
+subclasses, each level indented one step. For a module it shows the classes that include it
+directly. Browsing, the filter box, Accept (a new subclass appears and is selected), Versions and
+Remove all work as usual. Lists stop at 3000 rows.
 
 **Syntax highlighting.** Code panes (Workspace, Browser code pane, Method List, Inspector) are
 coloured as Ruby: keywords, strings (including `%w[]` and heredocs), comments, numbers, symbols and
@@ -160,13 +194,14 @@ lib/rubytalk/source.rb       Ripper-based statement splitting and method-source 
 lib/rubytalk/changes.rb      ChangeSet: parse, replay, write changes.rb
 lib/rubytalk/compiler.rb     Accept, replay, remove method/class
 lib/rubytalk/search.rb       implementors / senders
+lib/rubytalk/diff.rb         line diff for the Versions window
 lib/rubytalk/highlighter.rb  syntax highlighting: Ripper tokens to coloured spans (no GUI)
 lib/rubytalk/preferences.rb  remembers the last folder chosen
 lib/rubytalk/icon.rb         the icon, drawn in code; PNG and .icns writers
 lib/rubytalk/app_bundle.rb   builds RubyTalk.app
 lib/rubytalk/cli.rb          command-line options
 lib/rubytalk/reflection.rb   categories, method lists, definition text (no GUI)
-lib/rubytalk/gui/*.rb        Tk windows (gui/self_test.rb is the --selftest)
+lib/rubytalk/gui/*.rb        Tk windows (gui/self_test.rb is the --selftest; versions_window.rb the Versions window)
 test/test_core.rb            headless tests of everything above
 test/test_gui_smoke.rb       drives the windows against a recording stand-in for tk
 test/test_highlighter.rb      syntax highlighting (token classes, byte-to-character columns, bad input)
@@ -198,15 +233,22 @@ why the files under `gui/` do not use `# frozen_string_literal: true`. It also r
 5. Type in the filter box above the class list: the list narrows as you type.
 6. Syntax colours look right in your appearance (light and dark): keywords, strings, comments are
    all legible, and selected text stays readable.
-7. System > Change Directory...: pick a folder, confirm; RubyTalk restarts there (check the
+7. **Stop:** in a Workspace type `loop {}`, press Cmd-D, then Cmd-. (or System > Interrupt Running
+   Code): the window stays responsive while it runs (try moving it, opening the System menu), the
+   title says "running", and Stop ends it with "Interrupted." in the Transcript. Try
+   `Transcript.show_cr('hi'); sleep 2; :done` and watch the output appear before the 2 seconds end.
+8. **Versions:** in the Browser pick a method you defined, Accept a changed version, right-click >
+   Versions...: both versions are listed; tick the diff box; Revert; the browser shows the old text.
+9. **Hierarchy:** right-click a class > Hierarchy of this class: the list starts at BasicObject
+   and the class you chose is selected and shown.
+10. System > Change Directory...: pick a folder, confirm; RubyTalk restarts there (check the
    window title). Quit and start the app again from Finder: it opens in that folder.
 
 ## Known limits
 
 * No resumable debugger: an error unwinds the stack; you get the message and backtrace.
-* A runaway do it blocks the window; Ctrl-C in the terminal that started RubyTalk
-  raises `Interrupt` in the evaluation.
+* Stop cannot interrupt one long C call (see "Running code and Stop"); and code that touches Tk
+  directly from a do it must hand the work to `RubyTalk::GUI.on_main { ... }` itself.
+* Versions cover methods, not class definitions or class-body statements.
 * No class comments or protocol names of your own: Ruby has no equivalent, so the protocol
   list is Ruby's visibility.
-* Removing a method that you earlier overrode on a built-in class removes the method
-  entirely (the original is not restored until you restart and drop the change).
