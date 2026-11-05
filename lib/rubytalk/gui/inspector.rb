@@ -6,6 +6,8 @@ module RubyTalk
     # and an evaluation pane at the bottom where `self` is the inspected object.
     # Double-click a field to inspect it in turn.
     class Inspector
+      extend MainThreadNew
+
       MAX_ITEMS = 1000
 
       def initialize(object)

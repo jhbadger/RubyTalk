@@ -6,6 +6,8 @@ module RubyTalk
     # selected method's source below (editable; Accept recompiles it in place).
     # Double-click (or right-click > Browse) opens the System Browser there.
     class MethodList
+      extend MainThreadNew
+
       attr_reader :code
 
       def initialize(title, hits)

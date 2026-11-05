@@ -5,6 +5,8 @@ module RubyTalk
     # A Workspace: a free-form editor with its own temporaries. Variables
     # assigned in one do it are visible to the next, as in a Smalltalk workspace.
     class Workspace
+      extend MainThreadNew
+
       def self.sample
         <<~TEXT
           # Select some text and press #{MOD_LABEL}-D (do it), #{MOD_LABEL}-P (print it) or #{MOD_LABEL}-I (inspect it).

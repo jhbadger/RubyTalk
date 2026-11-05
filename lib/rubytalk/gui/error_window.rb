@@ -6,6 +6,8 @@ module RubyTalk
     # the error and its backtrace and can open an Inspector on the exception.
     # (There is no resumable debugger; the stack has already unwound.)
     class ErrorWindow
+      extend MainThreadNew
+
       def initialize(error)
         @error = error
         @window = TkToplevel.new

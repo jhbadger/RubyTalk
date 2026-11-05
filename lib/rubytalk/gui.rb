@@ -16,10 +16,87 @@ module RubyTalk
     @windows = []
     @last_pump = 0.0
     @cascade = 0
+    @main_queue = Queue.new
+    @main_window = nil
+
+    # Do its run on a worker thread (so Stop can interrupt them), but Tk must only
+    # be used from the main thread. Anything the worker needs done in a window
+    # (Transcript output, opening an Inspector from a do it ...) is queued here and
+    # carried out by the main thread, which drains the queue while it waits for the
+    # worker and on a short timer when idle.
+    Task = Struct.new(:block, :done, :value, :error)
+
+    # Extend a window class with this so `Inspector.new(x)` is safe to call from a do it.
+    module MainThreadNew
+      def new(*args, **kwargs, &block)
+        GUI.on_main { super(*args, **kwargs, &block) }
+      end
+    end
+
+    # Evaluator driver: while the worker runs, keep the window system alive by
+    # running Tk's event loop in short slices. That is what lets Stop (a key or a
+    # menu item) be handled, and lets the Transcript show output as it happens.
+    module EventPump
+      module_function
+
+      def wait(worker)
+        GUI.busy(true)
+        until worker.join(0.01)
+          GUI.drain_main_queue
+          Tk.tk_call('update')
+        end
+        GUI.drain_main_queue
+      ensure
+        GUI.busy(false)
+      end
+    end
 
     class << self
       # Keeps window objects alive for the life of the session.
       attr_reader :windows
+
+      # The Transcript window (set by MainWindow); shows the "running" state.
+      attr_accessor :main_window
+
+      # Run +block+ on the main thread and return its value (wait: true), or queue
+      # it and return at once (wait: false). On the main thread it just runs.
+      def on_main(wait: true, &block)
+        return block.call if Thread.current == Thread.main
+
+        task = Task.new(block, Queue.new)
+        @main_queue << task
+        return nil unless wait
+
+        task.done.pop
+        raise task.error if task.error
+
+        task.value
+      end
+
+      def drain_main_queue
+        until @main_queue.empty?
+          task = @main_queue.pop(true)
+          begin
+            task.value = task.block.call
+          rescue Exception => e # rubocop:disable Lint/RescueException -- handed back to the waiting thread
+            task.error = e
+          ensure
+            task.done << true
+          end
+        end
+      rescue ThreadError
+        nil # another drain got there first
+      end
+
+      # Stop the running do it (Cmd-. / System > Interrupt).
+      def interrupt
+        ::Transcript.show_cr(Evaluator.stop ? 'Interrupting...' : 'Nothing is running.')
+      end
+
+      # Title-bar hint while code runs.
+      def busy(flag)
+        @main_window&.busy = flag
+      end
 
       # Opens the Transcript, a System Browser and a Workspace, then runs Tk.
       # With selftest: true, runs the built-in checks against real widgets and
@@ -28,6 +105,8 @@ module RubyTalk
         main = MainWindow.new
         set_window_icon
         install_mac_quit
+        Evaluator.driver = EventPump
+        start_main_queue_timer
         if selftest
           failures = SelfTest.new(main).run
           begin
@@ -40,6 +119,13 @@ module RubyTalk
         Browser.open
         Workspace.new
         Tk.mainloop
+      end
+
+      # Carry out work queued by background threads (e.g. a Thread started from a do
+      # it that prints to the Transcript later) even when nothing is running.
+      def start_main_queue_timer
+        @main_queue_timer = TkTimer.new(100, -1, proc { safely { drain_main_queue } })
+        @main_queue_timer.start
       end
 
       # The Tk image used as the icon for every window (and, on macOS, the Dock
@@ -140,7 +226,7 @@ module RubyTalk
       end
 
       def notify_error(error)
-        return if error.is_a?(SystemExit)
+        return if error.is_a?(SystemExit) || error.is_a?(Evaluator::Interrupted)
 
         ErrorWindow.new(error)
       end
@@ -218,6 +304,7 @@ module RubyTalk
         add_item(system, 'Show Changes (copy)') do
           Workspace.new(text: RubyTalk.changes.to_text, title: 'Changes (a copy: edits here are not saved)')
         end
+        add_item(system, 'Interrupt Running Code', "#{MOD_LABEL}-.") { interrupt }
         add_item(system, 'Change Directory...') { change_directory }
         add_item(system, 'Reveal Changes File in Finder') { reveal_changes_file } if MAC
         add_item(system, 'Save Changes Now') do

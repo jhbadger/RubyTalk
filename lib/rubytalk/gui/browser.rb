@@ -13,6 +13,8 @@ module RubyTalk
     # its source. Accept (Cmd-S / Ctrl-S) compiles whatever is in the code pane
     # and logs it in changes.rb. Right-click lists for remove / new subclass.
     class Browser
+      extend MainThreadNew
+
       def self.open(target = nil, method: nil, side: :instance)
         new(target, method: method, side: side)
       end

@@ -12,6 +12,14 @@ class TkCallbackBreak < StandardError; end
 # string (e.g. from a `frozen_string_literal: true` file, or Module#name) raises
 # FrozenError. The fake reproduces that so such bugs fail the tests.
 module FakeStrict
+  # Real Tk is single-threaded (Cocoa insists on the main thread). RubyTalk runs do its
+  # on a worker thread and must hand every window operation to the main thread.
+  def self.main_thread!(what)
+    return if Thread.current == Thread.main
+
+    raise "fake Tk: #{what} used off the main thread (RubyTalk must hand it to GUI.on_main)"
+  end
+
   def self.check(*values)
     values.each do |v|
       case v
@@ -30,8 +38,23 @@ module Tk
     # Understands just the raw calls RubyTalk makes: message boxes, winfo,
     # `event generate`, listbox `size`, and the menu queries/invokes used by the
     # self-test. Everything else is accepted and ignored.
+    # Hooks for tests: update_hook runs on every `update` (as if events were being
+    # handled); last_title is the most recent `wm title`.
+    attr_accessor :update_hook, :last_title
+
+    def update_count
+      @update_count ||= 0
+    end
+
     def tk_call(*args)
+      FakeStrict.main_thread!('tk_call')
       FakeStrict.check(args)
+      if args.first == 'update'
+        @update_count = update_count + 1
+        TkTimer.run_pending
+        update_hook&.call
+      end
+      self.last_title = args[3] if args[0] == 'wm' && args[1] == 'title'
       first = args.first.to_s
       return (message_answer || 'yes') if first == 'tk_messageBox'
       return (rgb_answer || '65535 65535 65535') if first == 'winfo' && args[1] == 'rgb'
@@ -141,6 +164,7 @@ class FakeWidget
   end
 
   def initialize(parent = nil, options = nil, &_block)
+    FakeStrict.main_thread!("creating #{self.class}")
     @@count += 1
     @path = ".w#{@@count}"
     @@registry[@path] = self
@@ -200,6 +224,45 @@ class FakeWidget
 
   def respond_to_missing?(*)
     true
+  end
+end
+
+# Ruby/Tk's timer: TkTimer.new(interval, loop_count, *procs). Fired by `update` (one-shot
+# timers once, repeating timers every time) or explicitly with #fire in a test.
+class TkTimer
+  @all = []
+
+  class << self
+    attr_reader :all
+
+    def run_pending
+      all.dup.each { |timer| timer.fire if timer.started? }
+      all.reject! { |timer| timer.loop_count == 1 && !timer.started? }
+    end
+  end
+
+  attr_reader :loop_count
+
+  def initialize(interval = nil, loop_count = 1, *procs, &block)
+    @loop_count = loop_count
+    @procs = procs
+    @procs << block if block
+    @started = false
+    self.class.all << self
+  end
+
+  def start(*)
+    @started = true
+    self
+  end
+
+  def started?
+    @started
+  end
+
+  def fire
+    @started = false if @loop_count == 1
+    @procs.each(&:call)
   end
 end
 
@@ -282,6 +345,7 @@ class TkText < FakeWidget
   end
 
   def insert(index, string, *_tags)
+    FakeStrict.main_thread!('text insert')
     FakeStrict.check(string)
     @content.insert(offset_for(index), string)
     self

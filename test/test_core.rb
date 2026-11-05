@@ -6,6 +6,7 @@
 $LOAD_PATH.unshift(File.expand_path('../lib', __dir__))
 require 'minitest/autorun'
 require 'minitest/mock'
+require 'timeout'
 require 'tmpdir'
 require 'open3'
 require 'rbconfig'
@@ -72,6 +73,134 @@ class CoreTest < Minitest::Test
   def test_evaluate_in_receiver
     assert_equal 3, RubyTalk::Evaluator.evaluate_in('size', [1, 2, 3]).value
     assert_equal 'abc', RubyTalk::Evaluator.evaluate_in('self', 'abc').value
+  end
+
+  # --- Interruptible evaluation (worker thread + driver) ----------------------
+
+  # Drivers decide what the calling thread does while code runs on the worker.
+  class JoinDriver
+    def self.wait(worker)
+      worker.join
+    end
+  end
+
+  # Presses Stop (once or more) shortly after the code starts.
+  class StopDriver
+    class << self
+      attr_accessor :presses
+
+      def wait(worker)
+        sleep 0.05
+        (presses || 1).times do
+          RubyTalk::Evaluator.stop
+          sleep 0.05
+        end
+        worker.join
+      end
+    end
+  end
+
+  # Raises Ctrl-C (Interrupt) on the calling thread once, as a terminal would.
+  class CtrlCDriver
+    class << self
+      attr_accessor :raised
+
+      def wait(worker)
+        unless raised
+          self.raised = true
+          sleep 0.05
+          raise Interrupt
+        end
+        worker.join
+      end
+    end
+  end
+
+  class DyingDriver
+    def self.wait(_worker)
+      sleep 0.05
+      raise 'the window system went away'
+    end
+  end
+
+  def with_driver(driver)
+    RubyTalk::Evaluator.driver = driver
+    Timeout.timeout(10) { yield }
+  ensure
+    RubyTalk::Evaluator.driver = nil
+    StopDriver.presses = nil
+    CtrlCDriver.raised = nil
+  end
+
+  def threaded(source)
+    RubyTalk::Evaluator.evaluate(source, RubyTalk::Evaluator.new_binding)
+  end
+
+  def test_threaded_evaluation_returns_values_output_and_errors
+    with_driver(JoinDriver) do
+      result = threaded("puts 'from worker'; Thread.current == Thread.main ? :main : :worker")
+      assert result.ok
+      assert_equal :worker, result.value, 'code runs off the calling thread'
+      assert_equal "from worker\n", Transcript.buffer
+      assert_kind_of ZeroDivisionError, threaded('1 / 0').error
+      assert_kind_of SyntaxError, threaded('def (').error
+      refute RubyTalk::Evaluator.busy?
+    end
+  end
+
+  def test_stop_interrupts_a_runaway_loop_and_runs_ensure_blocks
+    with_driver(StopDriver) do
+      $rt_ensure_ran = false
+      result = threaded("begin; loop {}; ensure; $rt_ensure_ran = true; end")
+      refute result.ok
+      assert_kind_of RubyTalk::Evaluator::Interrupted, result.error
+      assert $rt_ensure_ran, 'ensure blocks run on interrupt'
+      assert_match(/Interrupted\./, Transcript.buffer)
+      refute RubyTalk::Evaluator.busy?
+      assert_equal 3, threaded('1 + 2').value, 'the evaluator is usable again'
+    end
+  end
+
+  def test_plain_rescue_in_user_code_cannot_swallow_the_interrupt
+    with_driver(StopDriver) do
+      result = threaded("begin; loop {}; rescue => e; :swallowed; end")
+      assert_kind_of RubyTalk::Evaluator::Interrupted, result.error
+    end
+  end
+
+  def test_second_stop_kills_code_that_catches_everything
+    with_driver(StopDriver) do
+      StopDriver.presses = 2
+      result = threaded("loop { begin; sleep; rescue Exception; end }")
+      assert_kind_of RubyTalk::Evaluator::Interrupted, result.error
+      refute RubyTalk::Evaluator.busy?
+    end
+  end
+
+  def test_stop_with_nothing_running
+    refute RubyTalk::Evaluator.stop
+  end
+
+  def test_only_one_evaluation_at_a_time
+    with_driver(JoinDriver) do
+      nested = threaded("RubyTalk::Evaluator.evaluate('1', binding).error.class")
+      assert_equal RubyTalk::Evaluator::Busy, nested.value
+    end
+  end
+
+  def test_ctrl_c_in_the_terminal_stops_the_code
+    with_driver(CtrlCDriver) do
+      result = threaded('loop {}')
+      assert_kind_of RubyTalk::Evaluator::Interrupted, result.error
+    end
+  end
+
+  def test_losing_the_window_system_kills_the_worker
+    with_driver(DyingDriver) do
+      result = threaded('sleep')
+      assert_kind_of RubyTalk::Evaluator::Interrupted, result.error
+      refute RubyTalk::Evaluator.busy?
+    end
   end
 
   # --- Source -----------------------------------------------------------

@@ -19,6 +19,7 @@ module RubyTalk
         error_opens_notifier inspector browser_navigation browser_accept_and_autosave
         browser_accept_by_key search_implementors_and_senders method_list_window
         implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
+        interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
       ].freeze
 
       def initialize(main)
@@ -291,6 +292,46 @@ module RubyTalk
         editor.set_contents('x = 1') # recolouring replaces, not accumulates
         assert(tags_at.call('1.4').include?('rt_number'), 'a number after set_contents')
         assert(tags_at.call('1.0').none? { |tag| tag.start_with?('rt_') }, 'old colours were cleared')
+      end
+
+      # Run `loop {}` as a do it; a timer presses Stop while the main thread is pumping
+      # events. Proves the worker thread, the event pump, Cmd-. handling and the
+      # interrupt all work together on real Tk.
+      def check_interrupt_stops_a_runaway_do_it
+        editor = Workspace.new(text: 'loop {}').editor
+        TkTimer.new(150, 1, proc { GUI.interrupt }).start
+        # Safety net so a failure is reported instead of hanging the self-test: if the
+        # timer never delivers Stop, a plain Ruby thread does, and the check fails.
+        rescued = false
+        watchdog = Thread.new do
+          sleep 8
+          rescued = true
+          Evaluator.stop
+          sleep 1
+          Evaluator.stop
+        end
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        editor.do_it
+        elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+        watchdog.kill
+        assert(!rescued, "the Stop timer never fired (the watchdog stopped it after #{elapsed.round(1)}s)")
+        assert(Transcript.buffer.include?('Interrupted.'), 'no "Interrupted." in the Transcript')
+        assert(!Evaluator.busy?, 'still marked busy')
+      end
+
+      # A thread started by a do it prints to the Transcript: Tk must only be touched
+      # from the main thread, so the text is handed over.
+      def check_background_thread_output
+        Workspace.new(text: "Thread.new { Transcript.show_cr 'selftest-background' }.join").editor.do_it
+        update
+        assert(@main.editor.contents.include?('selftest-background'), 'output from another thread did not arrive')
+      end
+
+      # `Inspector.new(x)` written inside a do it runs on the worker thread.
+      def check_windows_from_a_do_it
+        editor = Workspace.new(text: 'RubyTalk::GUI::Inspector.new([1, 2]); :ok').editor
+        editor.do_it
+        assert(GUI.windows.last.is_a?(Inspector), 'the Inspector was not opened')
       end
 
       def cleanup

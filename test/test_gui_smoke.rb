@@ -8,6 +8,7 @@ $LOAD_PATH.unshift(File.expand_path('fake', __dir__))
 $LOAD_PATH.unshift(File.expand_path('../lib', __dir__))
 require 'minitest/autorun'
 require 'minitest/mock'
+require 'timeout'
 require 'tmpdir'
 require 'rubytalk'
 require 'rubytalk/gui'
@@ -22,6 +23,8 @@ class GuiSmokeTest < Minitest::Test
   end
 
   def teardown
+    Evaluator.driver = nil
+    Tk.update_hook = nil
     FileUtils.remove_entry(@dir)
     Object.send(:remove_const, :RtGuiThing) if defined?(RtGuiThing)
     String.send(:remove_method, :rt_gui) if String.method_defined?(:rt_gui)
@@ -126,6 +129,109 @@ class GuiSmokeTest < Minitest::Test
     assert_equal RubyTalk::Highlighter::PALETTES[:light][:keyword], light.text.tag_options['rt_keyword']['-foreground']
   ensure
     Tk.rgb_answer = nil
+  end
+
+  # --- running code off the main thread (interrupt) ------------------------
+
+  def with_pump
+    Evaluator.driver = GUI::EventPump
+    Timeout.timeout(10) { yield }
+  ensure
+    Evaluator.driver = nil
+    Tk.update_hook = nil
+  end
+
+  def test_do_it_runs_off_the_main_thread_while_the_ui_keeps_updating
+    with_pump do
+      editor = GUI::Workspace.new(text: 'sleep 0.05; Thread.current == Thread.main').editor
+      before = Tk.update_count
+      editor.print_it
+      assert_equal 'sleep 0.05; Thread.current == Thread.main false', editor.contents
+      assert_operator Tk.update_count, :>, before, 'Tk events were processed while the code ran'
+    end
+  end
+
+  def test_stop_key_interrupts_a_runaway_do_it
+    with_pump do
+      editor = GUI::Workspace.new(text: 'loop {}').editor
+      pressed = false
+      Tk.update_hook = lambda do
+        next if pressed
+
+        pressed = true
+        editor.text.fire("#{GUI::MODIFIER}-Key-period")
+      end
+      windows = GUI.windows.size
+      editor.do_it
+      assert pressed
+      assert_match(/Interrupting\.\.\./, Transcript.buffer)
+      assert_match(/Interrupted\./, Transcript.buffer)
+      assert_equal windows, GUI.windows.size, 'an interrupt does not open an error window'
+      refute Evaluator.busy?
+    end
+  end
+
+  def test_interrupt_menu_item_and_nothing_running
+    GUI.interrupt
+    assert_match(/Nothing is running/, Transcript.buffer)
+    menubar = GUI::Workspace.new(text: 'x').window.options[:menu]
+    labels = menubar.entries.first[1][:menu].entries.map { |_, options| options[:label] }
+    assert_includes labels, 'Interrupt Running Code'
+  end
+
+  def test_output_and_windows_from_the_worker_are_handed_to_the_main_thread
+    with_pump do
+      main = GUI::MainWindow.new
+      code = "Transcript.show_cr 'from worker'; RubyTalk::GUI::Inspector.new([1, 2]); :done"
+      GUI::Workspace.new(text: code).editor.do_it
+      assert_includes main.editor.contents, 'from worker'
+      assert_instance_of GUI::Inspector, GUI.windows.last
+    end
+  end
+
+  def test_a_second_do_it_while_one_is_running_is_refused
+    with_pump do
+      editor = GUI::Workspace.new(text: 'sleep 0.05; :first').editor
+      other = GUI::Workspace.new(text: ':second').editor
+      Tk.update_hook = lambda do
+        Tk.update_hook = nil
+        other.do_it
+      end
+      editor.do_it
+      assert_match(/Something is already running/, Transcript.buffer)
+    end
+  end
+
+  def test_title_bar_shows_running_and_clears_afterwards
+    with_pump do
+      main = GUI::MainWindow.new
+      during = nil
+      Tk.update_hook = lambda do
+        during ||= Tk.last_title
+      end
+      GUI::Workspace.new(text: 'sleep 0.05').editor.do_it
+      assert_match(/running/, during)
+      assert_equal main.send(:title), Tk.last_title
+    end
+  end
+
+  def test_losing_the_window_while_code_runs_stops_the_code
+    with_pump do
+      editor = GUI::Workspace.new(text: 'sleep').editor
+      Tk.update_hook = -> { raise 'the window is gone' }
+      editor.do_it
+      Tk.update_hook = nil
+      refute Evaluator.busy?
+    end
+  end
+
+  def test_idle_background_output_is_drained_by_the_timer
+    main = GUI::MainWindow.new
+    GUI.start_main_queue_timer
+    Thread.new { Transcript.show_cr('late output') }.join
+    refute_includes main.editor.contents, 'late output', 'queued, not yet on screen'
+    TkTimer.all.last.fire
+    assert_includes main.editor.contents, 'late output'
   end
 
   def with_home(home)
@@ -344,13 +450,16 @@ class SelfTestAgainstFakeTest < Minitest::Test
     RubyTalk.changes = ChangeSet.new(File.join(dir, 'changes.rb'))
     RubyTalk.changes.autosave = true
     main = GUI::MainWindow.new
-    GUI.set_window_icon # GUI.start does this before the self-test runs
+    GUI.set_window_icon # GUI.start does these before the self-test runs
+    Evaluator.driver = GUI::EventPump
+    GUI.start_main_queue_timer
     failures = nil
-    out, = capture_io { failures = GUI::SelfTest.new(main).run }
+    out, = capture_io { Timeout.timeout(60) { failures = GUI::SelfTest.new(main).run } }
     assert_equal 0, failures, out
     assert_match(/\d+ passed, 0 failed/, out)
     assert_equal GUI::SelfTest::CHECKS.size, out.scan(/^  PASS/).size
   ensure
+    Evaluator.driver = nil
     FileUtils.remove_entry(dir) if dir
     Object.send(:remove_const, :RtSelfTest) if defined?(RtSelfTest)
   end

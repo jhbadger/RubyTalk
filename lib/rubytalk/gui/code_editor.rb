@@ -129,6 +129,11 @@ module RubyTalk
         source, first, last = current_expression
         return nil if source.strip.empty?
 
+        if Evaluator.busy?
+          ::Transcript.show_cr("Something is already running: press #{MOD_LABEL}-. to stop it first.")
+          return nil
+        end
+
         result = @evaluator.call(source)
         GUI.notify_error(result.error) unless result.ok
         [result, first, last]
@@ -175,6 +180,7 @@ module RubyTalk
       def bind_keys
         command_keys.each { |letter, action| bind_command(letter) { send(action) } }
         bind_command('s') { accept } if can_accept?
+        bind_command('period') { GUI.interrupt } # Cmd-. (Ctrl-. elsewhere): stop the running code
       end
 
       def bind_command(letter, &action)

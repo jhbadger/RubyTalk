@@ -16,12 +16,19 @@ module RubyTalk
                                         evaluator: ->(source) { Evaluator.evaluate(source, scope, file: 'transcript') })
         @editor.frame.pack(fill: 'both', expand: 1)
         @editor.text.insert('end', ::Transcript.buffer.dup)
-        @listener = ::Transcript.add_listener { |chunk| show(chunk) }
+        # Output can arrive from a do it's worker thread: hand it to the main thread.
+        @listener = ::Transcript.add_listener { |chunk| GUI.on_main(wait: false) { show(chunk) } }
+        GUI.main_window = self
         GUI.build_menubar(@root, -> { @editor })
         @root.protocol('WM_DELETE_WINDOW') { GUI.quit }
         GUI.windows << self
         banner
         @editor.focus
+      end
+
+      # Title-bar hint while code is running (see GUI.busy).
+      def busy=(flag)
+        GUI.window_title(@root, flag ? "#{title} (running: #{MOD_LABEL}-. to stop)" : title)
       end
 
       private
