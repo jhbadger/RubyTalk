@@ -36,11 +36,22 @@ module Tk
       return 'yes' if first == 'tk_messageBox'
       return '0' if first == 'winfo'
       return generate_event(args) if first == 'event' && args[1] == 'generate'
+      return image_call(args) if first == 'image'
 
       widget = FakeWidget.find(first)
       return widget_call(widget, args[1..]) if widget
 
       ''
+    end
+
+    # `image create photo -data ...`, `image type`, `image width` (the window icon).
+    def image_call(args)
+      case args[1]
+      when 'create' then (@images ||= []).push(args.last(3)).then { "image#{@images.size}" }
+      when 'type' then 'photo'
+      when 'width' then '128'
+      else ''
+      end
     end
 
     def generate_event(args)

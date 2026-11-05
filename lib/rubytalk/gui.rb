@@ -26,6 +26,7 @@ module RubyTalk
       # exits instead (see SelfTest).
       def start(selftest: false)
         main = MainWindow.new
+        set_window_icon
         install_mac_quit
         if selftest
           failures = SelfTest.new(main).run
@@ -41,6 +42,10 @@ module RubyTalk
         Tk.mainloop
       end
 
+      # The Tk image used as the icon for every window (and, on macOS, the Dock
+      # icon even when RubyTalk is not run from the app bundle). nil if Tk refused it.
+      attr_reader :icon_image
+
       # Stagger new windows so they do not stack exactly on top of each other.
       def place(window, x: nil, y: nil)
         unless x
@@ -50,6 +55,14 @@ module RubyTalk
           y = 80 + (step * 28)
         end
         Tk.tk_call('wm', 'geometry', window.path, "+#{x}+#{y}")
+      end
+
+      def set_window_icon
+        @icon_image = Tk.tk_call('image', 'create', 'photo', '-data', Icon.png_base64(128).dup).to_s
+        Tk.tk_call('wm', 'iconphoto', '.', '-default', @icon_image)
+      rescue StandardError => e
+        @icon_image = nil
+        ::Transcript.show_cr("(window icon not set: #{e.class}: #{e.message.lines.first.to_s.strip})")
       end
 
       # Draw anything pending now (used before slow searches).

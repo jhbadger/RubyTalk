@@ -18,7 +18,7 @@ module RubyTalk
         current_line_without_selection key_binding_print_it transcript_window_receives_output
         error_opens_notifier inspector browser_navigation browser_accept_and_autosave
         browser_accept_by_key search_implementors_and_senders method_list_window
-        implementors_key_binding edit_menu_invokes_command changes_file_replays
+        implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon
       ].freeze
 
       def initialize(main)
@@ -251,6 +251,14 @@ module RubyTalk
         entries = ChangeSet.parse(File.read(changes_path)).compact
         assert(entries.any? { |e| e.kind == :class && e.target == 'RtSelfTest' }, 'class entry missing')
         assert(entries.any? { |e| e.kind == :method && e.key == 'other' }, 'method entry missing')
+      end
+
+      # The icon is built in code and handed to Tk as a base64 PNG.
+      def check_window_icon
+        image = GUI.icon_image
+        assert(image && !image.empty?, 'no icon image was created (see the Transcript for the reason)')
+        assert_equal 'photo', Tk.tk_call('image', 'type', image).to_s
+        assert_equal 128, Tk.tk_call('image', 'width', image).to_i
       end
 
       def cleanup

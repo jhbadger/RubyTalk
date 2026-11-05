@@ -25,6 +25,33 @@ ruby ~/lib/src/rubytalk/bin/rubytalk --selftest
 
 It cannot test things that need a person; see the checklist at the end.
 
+## macOS app and icon
+
+RubyTalk draws its own icon in code (a ruby gem in a speech bubble; no image files) and can
+build a double-clickable application bundle with it, like the Python/Tk `--build-app` pattern.
+
+```
+ruby bin/rubytalk --build-app ~/Applications      # builds ~/Applications/RubyTalk.app
+ruby bin/rubytalk --build-app . --link            # run the code in place (see below)
+ruby bin/rubytalk --build-app . --workdir ~/smalltalk-image
+ruby bin/rubytalk --icon-png 512 icon.png         # just the icon, any size
+```
+
+* **Where does `changes.rb` live when started from Finder?** Finder starts apps in `/`, so the
+  app starts RubyTalk with `--dir`: by default `~/RubyTalk` (created on first launch). Use
+  `--workdir` to choose another folder. From a terminal, `rubytalk --dir DIR` does the same.
+* **Copy or link?** By default the code is copied into the app, so it keeps working if you move
+  or edit the source folder (rebuild to pick up changes). With `--link` the app runs the source
+  where it is, so edits take effect on the next launch; it breaks if the folder moves.
+* The launcher runs the Ruby that built it. For Homebrew Ruby it uses the stable
+  `/opt/homebrew/opt/ruby/bin/ruby` path, so `brew upgrade ruby` does not break the app.
+  If you switch Ruby versions or install the `tk` gem into a different Ruby, rebuild the app.
+* The same icon is used for the windows (and the Dock when started from a terminal).
+* Known limit: the launcher `exec`s Ruby, so macOS may show "ruby" as the app-menu title even
+  though the Dock icon and name are RubyTalk's.
+* An app you build yourself carries no quarantine flag, so it opens normally. If you copy one to
+  another Mac by download or AirDrop, use right-click > Open the first time (it is not signed).
+
 ## The windows
 
 **Transcript** (the main window). Output area and editor in one, as in Smalltalk.
@@ -114,15 +141,20 @@ lib/rubytalk/source.rb       Ripper-based statement splitting and method-source 
 lib/rubytalk/changes.rb      ChangeSet: parse, replay, write changes.rb
 lib/rubytalk/compiler.rb     Accept, replay, remove method/class
 lib/rubytalk/search.rb       implementors / senders
+lib/rubytalk/icon.rb         the icon, drawn in code; PNG and .icns writers
+lib/rubytalk/app_bundle.rb   builds RubyTalk.app
+lib/rubytalk/cli.rb          command-line options
 lib/rubytalk/reflection.rb   categories, method lists, definition text (no GUI)
 lib/rubytalk/gui/*.rb        Tk windows (gui/self_test.rb is the --selftest)
 test/test_core.rb            headless tests of everything above
 test/test_gui_smoke.rb       drives the windows against a recording stand-in for tk
+test/test_icon.rb            icon pixels, .icns structure, app bundle (runs its launcher), CLI
 ```
 
 ```
 ruby test/test_core.rb
 ruby test/test_gui_smoke.rb
+ruby test/test_icon.rb
 ```
 
 The smoke test uses `test/fake/tk.rb`, so it checks RubyTalk's own GUI logic but cannot

@@ -33,6 +33,7 @@ class GuiSmokeTest < Minitest::Test
   def test_start_opens_transcript_browser_and_workspace
     GUI.start
     assert_equal [GUI::MainWindow, GUI::Browser, GUI::Workspace], GUI.windows.last(3).map(&:class)
+    assert GUI.icon_image, 'the window/Dock icon is set at startup'
   end
 
   def test_method_list_accept_recompiles_in_place
@@ -239,6 +240,7 @@ class SelfTestAgainstFakeTest < Minitest::Test
     RubyTalk.changes = ChangeSet.new(File.join(dir, 'changes.rb'))
     RubyTalk.changes.autosave = true
     main = GUI::MainWindow.new
+    GUI.set_window_icon # GUI.start does this before the self-test runs
     failures = nil
     out, = capture_io { failures = GUI::SelfTest.new(main).run }
     assert_equal 0, failures, out
