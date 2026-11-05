@@ -30,10 +30,10 @@ module RubyTalk
         @list.frame.pack(side: 'left', fill: 'y')
         @list.set(@fields, @fields.map(&:first))
         @list.box.bind('Double-Button-1') { GUI.safely { open_selected } }
-        @value = CodeEditor.new(panes, width: 64, height: 14, wrap: 'word',
+        @value = CodeEditor.new(panes, width: 64, height: 14, wrap: 'word', highlight: true,
                                        evaluator: ->(source) { Evaluator.evaluate_in(source, @selected) })
         @value.frame.pack(side: 'left', fill: 'both', expand: 1)
-        @console = CodeEditor.new(@window, width: 92, height: 6,
+        @console = CodeEditor.new(@window, width: 92, height: 6, highlight: true,
                                            evaluator: ->(source) { Evaluator.evaluate_in(source, @object) })
         @console.frame.pack(side: 'top', fill: 'x')
         @console.set_contents("# self is the inspected object; try: #{MOD_LABEL}-P on the next line\nself")

@@ -18,7 +18,7 @@ module RubyTalk
         current_line_without_selection key_binding_print_it transcript_window_receives_output
         error_opens_notifier inspector browser_navigation browser_accept_and_autosave
         browser_accept_by_key search_implementors_and_senders method_list_window
-        implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook
+        implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
       ].freeze
 
       def initialize(main)
@@ -276,6 +276,21 @@ module RubyTalk
           @main.root.protocol('WM_DELETE_WINDOW') { GUI.quit }
         end
         assert(called, '::tk::mac::Quit did not reach the window-close handler')
+      end
+
+      # Colours are Tk text tags named rt_<kind>. The first line has a two-byte
+      # character (é) so this also proves the byte-to-character column conversion.
+      def check_syntax_highlighting
+        editor = Workspace.new(text: "é = :sym # ü\ndef foo; end").editor
+        tags_at = ->(index) { Tk.tk_call(editor.text.path, 'tag', 'names', index).to_s.split }
+        assert(tags_at.call('1.0').none? { |tag| tag.start_with?('rt_') }, 'a plain identifier should be uncoloured')
+        assert(tags_at.call('1.4').include?('rt_symbol'), "symbol at 1.4: #{tags_at.call('1.4').inspect}")
+        assert(tags_at.call('1.9').include?('rt_comment'), "comment at 1.9: #{tags_at.call('1.9').inspect}")
+        assert(tags_at.call('2.0').include?('rt_keyword'), 'def should be a keyword')
+        assert(tags_at.call('2.4').include?('rt_def_name'), 'foo should be a method name')
+        editor.set_contents('x = 1') # recolouring replaces, not accumulates
+        assert(tags_at.call('1.4').include?('rt_number'), 'a number after set_contents')
+        assert(tags_at.call('1.0').none? { |tag| tag.start_with?('rt_') }, 'old colours were cleared')
       end
 
       def cleanup

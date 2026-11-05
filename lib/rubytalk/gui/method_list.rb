@@ -21,7 +21,7 @@ module RubyTalk
         @list.context_menu([['Browse', -> { browse }]])
         @status = TkLabel.new(@window, text: +'', anchor: 'w')
         @status.pack(side: 'top', fill: 'x', padx: 6)
-        @code = CodeEditor.new(@window, width: 90, height: 16, on_accept: -> { accept },
+        @code = CodeEditor.new(@window, width: 90, height: 16, on_accept: -> { accept }, highlight: true,
                                         evaluator: ->(source) { Evaluator.evaluate(source, Evaluator.new_binding, file: 'method list') })
         @code.frame.pack(side: 'top', fill: 'both', expand: 1)
         GUI.build_menubar(@window, -> { @code })

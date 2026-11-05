@@ -76,6 +76,7 @@ require_relative 'rubytalk/transcript'
 ::Transcript = RubyTalk::TranscriptStream.new unless defined?(::Transcript)
 require_relative 'rubytalk/evaluator'
 require_relative 'rubytalk/source'
+require_relative 'rubytalk/highlighter'
 require_relative 'rubytalk/changes'
 require_relative 'rubytalk/reflection'
 require_relative 'rubytalk/compiler'

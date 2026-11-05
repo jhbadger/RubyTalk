@@ -90,6 +90,44 @@ class GuiSmokeTest < Minitest::Test
     end
   end
 
+  def test_code_panes_are_highlighted_and_the_transcript_is_not
+    workspace = GUI::Workspace.new(text: "def foo; :sym; end # c")
+    text = workspace.editor.text
+    tags_at = ->(index) { text.tag_command(['names', index]).split }
+    assert_includes tags_at.call('1.0'), 'rt_keyword'
+    assert_includes tags_at.call('1.4'), 'rt_def_name'
+    assert_includes tags_at.call('1.9'), 'rt_symbol'
+    assert_includes tags_at.call('1.20'), 'rt_comment'
+
+    workspace.editor.set_contents('x = 1')
+    assert_includes tags_at.call('1.4'), 'rt_number'
+    refute_includes tags_at.call('1.0'), 'rt_keyword', 'old colours are cleared'
+
+    main = GUI::MainWindow.new
+    main.editor.set_contents('def foo; end')
+    assert_empty main.editor.text.tag_store, 'the Transcript is output, not code: no highlighting'
+  end
+
+  def test_highlighting_follows_typing_and_print_it
+    editor = GUI::Workspace.new(text: '1 + 1').editor
+    editor.print_it
+    assert_includes editor.text.tag_command(['names', '1.0']).split, 'rt_number'
+    editor.text.insert('end', +' # typed')
+    editor.text.fire('KeyRelease')
+    assert_includes editor.text.tag_command(['names', '1.8']).split, 'rt_comment'
+  end
+
+  def test_palette_follows_the_background_colour
+    Tk.rgb_answer = '0 0 0'
+    dark = GUI::Workspace.new(text: 'x').editor
+    assert_equal RubyTalk::Highlighter::PALETTES[:dark][:keyword], dark.text.tag_options['rt_keyword']['-foreground']
+    Tk.rgb_answer = '65535 65535 65535'
+    light = GUI::Workspace.new(text: 'x').editor
+    assert_equal RubyTalk::Highlighter::PALETTES[:light][:keyword], light.text.tag_options['rt_keyword']['-foreground']
+  ensure
+    Tk.rgb_answer = nil
+  end
+
   def with_home(home)
     saved = ENV.values_at('HOME', 'XDG_CONFIG_HOME')
     ENV['HOME'] = home

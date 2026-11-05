@@ -59,7 +59,7 @@ module RubyTalk
                                ['Senders of this selector', -> { selector_search(:senders) }],
                                ['Remove method', -> { remove_method }]])
         build_options
-        @code = CodeEditor.new(@window, width: 100, height: 18,
+        @code = CodeEditor.new(@window, width: 100, height: 18, highlight: true,
                                         evaluator: ->(source) { Evaluator.evaluate(source, workspace_scope, file: 'browser') },
                                         on_accept: -> { accept })
         @code.frame.pack(side: 'top', fill: 'both', expand: 1)

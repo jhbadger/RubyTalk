@@ -34,6 +34,7 @@ module Tk
       FakeStrict.check(args)
       first = args.first.to_s
       return (message_answer || 'yes') if first == 'tk_messageBox'
+      return (rgb_answer || '65535 65535 65535') if first == 'winfo' && args[1] == 'rgb'
       return '0' if first == 'winfo'
       return generate_event(args) if first == 'event' && args[1] == 'generate'
       return image_call(args) if first == 'image'
@@ -49,7 +50,7 @@ module Tk
 
     # The folder chooser: tests set Tk.chooser_answer ('' means Cancel) and read
     # Tk.chooser_requests to see the options RubyTalk passed.
-    attr_accessor :chooser_answer, :message_answer
+    attr_accessor :chooser_answer, :message_answer, :rgb_answer
 
     def chooser_requests
       @chooser_requests ||= []
@@ -94,7 +95,10 @@ module Tk
     def widget_call(widget, rest)
       case rest.first
       when 'size' then widget.items.size.to_s
-      when 'cget' then widget.options.fetch(rest[1].delete_prefix('-').to_sym).path
+      when 'cget'
+        value = widget.options[rest[1].delete_prefix('-').to_sym]
+        value.respond_to?(:path) ? value.path : value.to_s
+      when 'tag' then widget.tag_command(rest[1..]).to_s
       when 'entrycget' then widget.entries.find { |_, o| o[:label] == rest[1] }[1][:menu].path
       when 'invoke' then widget.invoke(rest[1]).to_s
       else ''
@@ -287,6 +291,27 @@ class TkText < FakeWidget
     @content = +''
     @selection = nil
     self
+  end
+
+  # `.text tag configure|add|remove|names ...` as sent by Tk.tk_call (the highlighter's tags).
+  def tag_options
+    @tag_options ||= {}
+  end
+
+  def tag_store
+    @tag_store ||= Hash.new { |hash, key| hash[key] = [] }
+  end
+
+  def tag_command(args)
+    case args[0]
+    when 'configure' then tag_options[args[1]] = Hash[*args[2..]]
+    when 'remove' then tag_store.delete(args[1])
+    when 'add'
+      args[2..].each_slice(2) { |first, last| tag_store[args[1]] << [offset_for(first), offset_for(last)] }
+    when 'names'
+      offset = offset_for(args[1])
+      tag_store.select { |_, ranges| ranges.any? { |first, last| first <= offset && offset < last } }.keys.join(' ')
+    end
   end
 
   def tag_add(tag, first = nil, last = nil, *)

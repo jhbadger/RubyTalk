@@ -11,17 +11,20 @@ module RubyTalk
     #
     # +evaluator+ is a callable taking source text and returning an
     # Evaluator::Result; it decides the context (workspace binding, inspected
-    # object ...).
+    # object ...). With highlight: true the text is syntax-coloured as Ruby
+    # (see Highlighter); the Transcript is left plain because it mostly holds output.
     class CodeEditor
       attr_reader :frame, :text
 
-      def initialize(parent, evaluator:, width: 80, height: 12, wrap: 'none', on_accept: nil)
+      def initialize(parent, evaluator:, width: 80, height: 12, wrap: 'none', on_accept: nil, highlight: false)
         @evaluator = evaluator
         @on_accept = on_accept
+        @highlight = false
         @frame, @text = GUI.scrolled_text(parent, width: width, height: height, wrap: wrap)
         build_menu
         bind_keys
         bind_popup
+        setup_highlighting if highlight
       end
 
       def can_accept?
@@ -42,6 +45,18 @@ module RubyTalk
         # Tk leaves the cursor after inserted text; put it back at the start so
         # "do it" with no selection uses the first line.
         Tk.tk_call(@text.path, 'mark', 'set', 'insert', '1.0')
+        rehighlight
+      end
+
+      # Recolour the whole text. Cheap enough to run on every key release; texts
+      # over Highlighter::MAX_SOURCE characters are left uncoloured.
+      def rehighlight
+        return unless @highlight
+
+        Highlighter::TAGS.each { |tag| Tk.tk_call(@text.path, 'tag', 'remove', "rt_#{tag}", '1.0', 'end') }
+        Highlighter.ranges_by_tag(contents).each do |tag, ranges|
+          Tk.tk_call(@text.path, 'tag', 'add', "rt_#{tag}", *ranges)
+        end
       end
 
       def focus
@@ -124,6 +139,30 @@ module RubyTalk
         @text.insert(index, string.dup)
         @text.tag_remove('sel', '1.0', 'end')
         @text.tag_add('sel', index, "#{index}+#{string.size}c")
+        rehighlight
+      end
+
+      def setup_highlighting
+        @highlight = true
+        palette = Highlighter::PALETTES.fetch(dark_background? ? :dark : :light)
+        Highlighter::TAGS.each do |tag|
+          Tk.tk_call(@text.path, 'tag', 'configure', "rt_#{tag}", '-foreground', palette.fetch(tag).dup)
+        end
+        # Our tags are newer than the selection tag, so put the selection back on top.
+        Tk.tk_call(@text.path, 'tag', 'raise', 'sel')
+        @text.bind('KeyRelease') { GUI.safely { rehighlight } }
+        @text.bind('ButtonRelease-2') { GUI.safely { rehighlight } } # middle-click paste
+      end
+
+      # Pick the palette from the actual background colour (light or dark appearance).
+      def dark_background?
+        background = Tk.tk_call(@text.path, 'cget', '-background').to_s.dup
+        red, green, blue = Tk.tk_call('winfo', 'rgb', @text.path, background).to_s.split.map(&:to_i)
+        return false unless blue
+
+        (((0.299 * red) + (0.587 * green) + (0.114 * blue)) / 65_535.0) < 0.5
+      rescue StandardError
+        false
       end
 
       def command_keys
@@ -158,7 +197,12 @@ module RubyTalk
           GUI.add_item(@menu, 'Accept', "#{MOD_LABEL}-S") { accept }
         end
         @menu.add('separator')
-        %w[Cut Copy Paste].each { |name| GUI.add_item(@menu, name) { GUI.generate_event(name) } }
+        %w[Cut Copy Paste].each do |name|
+          GUI.add_item(@menu, name) do
+            GUI.generate_event(name)
+            rehighlight
+          end
+        end
       end
 
       def bind_popup

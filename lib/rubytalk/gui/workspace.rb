@@ -23,7 +23,7 @@ module RubyTalk
         GUI.window_title(@window, title)
         GUI.place(@window)
         scope = Evaluator.new_binding
-        @editor = CodeEditor.new(@window, width: 80, height: 20,
+        @editor = CodeEditor.new(@window, width: 80, height: 20, highlight: true,
                                           evaluator: ->(source) { Evaluator.evaluate(source, scope, file: 'workspace') })
         @editor.frame.pack(fill: 'both', expand: 1)
         @editor.set_contents(text || self.class.sample)

@@ -117,6 +117,14 @@ right-click menu.
   computed name are invisible, methods built by `define_method` are found only if their
   source can be read, and `[]`/`[]=` are not searched.
 
+**Syntax highlighting.** Code panes (Workspace, Browser code pane, Method List, Inspector) are
+coloured as Ruby: keywords, strings (including `%w[]` and heredocs), comments, numbers, symbols and
+labels, constants, `@`/`$` variables, regexps, and method names after `def`. It uses Ruby's own
+lexer (Ripper), so unfinished code colours as you type. The palette follows the pane's
+background, so it suits both light and dark appearance (chosen when the window opens). The
+Transcript is not coloured (it is mostly output), and texts over 60,000 characters are left plain
+to keep typing responsive. Colours live in `Highlighter::PALETTES`.
+
 **Inspector**: fields (instance variables, array elements, hash entries, struct members)
 on the left, selected value on the right, and a pane at the bottom where `self` is the
 inspected object. Double-click a field to inspect it.
@@ -152,6 +160,7 @@ lib/rubytalk/source.rb       Ripper-based statement splitting and method-source 
 lib/rubytalk/changes.rb      ChangeSet: parse, replay, write changes.rb
 lib/rubytalk/compiler.rb     Accept, replay, remove method/class
 lib/rubytalk/search.rb       implementors / senders
+lib/rubytalk/highlighter.rb  syntax highlighting: Ripper tokens to coloured spans (no GUI)
 lib/rubytalk/preferences.rb  remembers the last folder chosen
 lib/rubytalk/icon.rb         the icon, drawn in code; PNG and .icns writers
 lib/rubytalk/app_bundle.rb   builds RubyTalk.app
@@ -160,6 +169,7 @@ lib/rubytalk/reflection.rb   categories, method lists, definition text (no GUI)
 lib/rubytalk/gui/*.rb        Tk windows (gui/self_test.rb is the --selftest)
 test/test_core.rb            headless tests of everything above
 test/test_gui_smoke.rb       drives the windows against a recording stand-in for tk
+test/test_highlighter.rb      syntax highlighting (token classes, byte-to-character columns, bad input)
 test/test_icon.rb            icon pixels, .icns structure, app bundle (runs its launcher), CLI
 ```
 
@@ -167,6 +177,7 @@ test/test_icon.rb            icon pixels, .icns structure, app bundle (runs its 
 ruby test/test_core.rb
 ruby test/test_gui_smoke.rb
 ruby test/test_icon.rb
+ruby test/test_highlighter.rb
 ```
 
 The smoke test uses `test/fake/tk.rb`, so it checks RubyTalk's own GUI logic but cannot
@@ -185,7 +196,9 @@ why the files under `gui/` do not use `# frozen_string_literal: true`. It also r
    (`--selftest` proves Cmd-Q reaches the close handler, but not that the program then exits.)
 4. Make a change, then kill the process (`kill -9`); restart: the change is still there.
 5. Type in the filter box above the class list: the list narrows as you type.
-6. System > Change Directory...: pick a folder, confirm; RubyTalk restarts there (check the
+6. Syntax colours look right in your appearance (light and dark): keywords, strings, comments are
+   all legible, and selected text stays readable.
+7. System > Change Directory...: pick a folder, confirm; RubyTalk restarts there (check the
    window title). Quit and start the app again from Finder: it opens in that folder.
 
 ## Known limits
