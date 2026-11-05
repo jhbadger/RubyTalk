@@ -62,19 +62,35 @@ module RubyTalk
     def define_toplevel(statement, description, changes)
       name = description.name
       existing = Reflection.lookup(name)
-      template = existing && Reflection.class_definition(existing).strip
+      shown = existing && Reflection.class_definition(existing).strip # what the pane showed
+      comment, body = Source.split_comment(statement)
+      template = existing && Reflection.class_template(existing).strip # the definition without the comment
       TOPLEVEL_BINDING.eval(statement, "rubytalk:#{name}", 1)
       klass = Reflection.lookup(name) or raise Error, "#{name} was not defined"
 
       if existing.nil? || changes.user_defined?(name)
-        # A user-created class: its definition text is replaced in place.
-        unless existing && statement.strip == template
-          changes.record(kind: :class, target: name, source: statement, created: true)
-        end
-      elsif statement.strip != template
+        # A user-created class: its definition text (comment included) is replaced in place.
+        changes.record(kind: :class, target: name, source: statement, created: true) unless existing && statement.strip == shown
+      elsif statement.strip == shown
+        nil # nothing was changed
+      elsif body.strip == template
+        record_class_comment(klass, comment, changes) # only the comment above the class was edited
+      else
         changes.record(kind: :open, target: name, key: Digest::SHA1.hexdigest(statement)[0, 12], source: statement)
       end
       Outcome.new(ok: true, message: "#{description.kind} #{name} accepted", klass: klass, side: :instance)
+    end
+
+    # The comment of a class that already existed. It is kept as a small reopen entry (the
+    # comment above the unchanged definition) so it replays harmlessly. Writing the original
+    # comment back, or clearing yours, removes the entry.
+    def record_class_comment(klass, comment, changes)
+      name = Reflection.name_of(klass)
+      if comment.strip.empty? || comment == Reflection.file_comment(klass)
+        changes.delete_where { |e| e.kind == :open && e.target == name && e.key == 'comment' }
+      else
+        changes.record(kind: :open, target: name, key: 'comment', source: "#{comment}#{Reflection.class_template(klass)}")
+      end
     end
 
     def define_member(statement, description, klass, side, changes)

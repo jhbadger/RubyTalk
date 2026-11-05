@@ -156,11 +156,39 @@ module RubyTalk
       includers.sort_by { |candidate| name_of(candidate) }
     end
 
+    # What the browser shows for a class: its comment (the # lines above `class`), then the
+    # definition. A class created in RubyTalk shows exactly the text it was accepted with.
     def class_definition(klass)
-      name = name_of(klass)
-      entry = RubyTalk.changes&.class_entry(name)
+      entry = RubyTalk.changes&.class_entry(name_of(klass))
       return entry.source if entry&.created
 
+      "#{class_comment(klass)}#{class_template(klass)}"
+    end
+
+    # The class comment: yours if you edited it (kept in changes.rb), else the RDoc comment above
+    # the class in its source file when it was written in Ruby, else "". Ends in a newline.
+    def class_comment(klass, changes = RubyTalk.changes)
+      entry = changes&.open_entry(name_of(klass), 'comment')
+      entry ? Source.split_comment(entry.source).first : file_comment(klass)
+    end
+
+    # Lines that are tool settings, not documentation.
+    MAGIC_COMMENT = /\A#\s*(-\*-|frozen_string_literal|encoding|coding|warn_indent|shareable_constant_value)/.freeze
+
+    def file_comment(klass)
+      name = name_of(klass) or return ''
+      file, line = Object.const_source_location(name)
+      return '' unless file && line && File.file?(file)
+
+      comment = Source.leading_comments(File.readlines(file, encoding: 'UTF-8'), line - 1)
+      comment.lines.reject { |text| text.match?(MAGIC_COMMENT) }.first(40).join
+    rescue NameError, SystemCallError, EncodingError, ArgumentError
+      ''
+    end
+
+    # `class Foo < Bar` plus the modules it adds, with no comment.
+    def class_template(klass)
+      name = name_of(klass)
       return "module #{name}\nend\n" unless klass.is_a?(Class)
 
       superclass = klass.superclass
@@ -173,7 +201,7 @@ module RubyTalk
     end
 
     def new_class_template(superclass_name = 'Object')
-      "class NewClass < #{superclass_name}\n  # comment\nend\n"
+      "# Describe NewClass here.\nclass NewClass < #{superclass_name}\nend\n"
     end
 
     def class_summary(klass)

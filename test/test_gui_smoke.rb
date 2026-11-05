@@ -131,6 +131,23 @@ class GuiSmokeTest < Minitest::Test
     Tk.rgb_answer = nil
   end
 
+  # --- class comments ----------------------------------------------------
+
+  def test_browser_shows_and_edits_class_comments
+    Object.const_set(:RtCommented, Class.new)
+    browser = GUI::Browser.open(RtCommented)
+    assert_equal "class RtCommented < Object\nend\n", browser.code.contents, 'no comment yet'
+    browser.code.set_contents("# Says hello.\nclass RtCommented < Object\nend\n")
+    browser.code.accept
+    assert_equal "# Says hello.\nclass RtCommented < Object\nend\n", browser.code.contents
+    again = GUI::Browser.open(RtCommented)
+    assert_equal "# Says hello.\nclass RtCommented < Object\nend\n", again.code.contents, 'a new browser shows it too'
+    tags = again.code.text.tag_command(['names', '1.2']).split
+    assert_includes tags, 'rt_comment'
+  ensure
+    Object.send(:remove_const, :RtCommented) if defined?(RtCommented)
+  end
+
   # --- debugger ----------------------------------------------------------
 
   def debugger_fixture

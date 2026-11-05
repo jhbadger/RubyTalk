@@ -20,7 +20,7 @@ module RubyTalk
         browser_accept_by_key search_implementors_and_senders method_list_window
         implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
         interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
-        versions_window hierarchy_browser debugger
+        versions_window hierarchy_browser debugger class_comment
       ].freeze
 
       def initialize(main)
@@ -373,6 +373,19 @@ module RubyTalk
         debugger.console.set_contents('dbg_value + 1')
         debugger.console.print_it
         assert_equal 'dbg_value + 1 42', debugger.console.contents
+      end
+
+      # Edit the comment above a class that already existed, accept, and reopen the browser.
+      def check_class_comment
+        Object.const_set(:RtSelfDoc, Class.new)
+        browser = Browser.open(::RtSelfDoc)
+        browser.code.set_contents("# selftest doc\nclass RtSelfDoc < Object\nend\n")
+        browser.code.accept
+        assert_equal "# selftest doc\n", Reflection.class_comment(::RtSelfDoc)
+        again = Browser.open(::RtSelfDoc)
+        assert(again.code.contents.start_with?("# selftest doc\n"), 'a new browser did not show the comment')
+      ensure
+        Object.send(:remove_const, :RtSelfDoc) if Object.const_defined?(:RtSelfDoc)
       end
 
       def cleanup

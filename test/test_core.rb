@@ -12,6 +12,11 @@ require 'open3'
 require 'rbconfig'
 require 'rubytalk'
 
+# A documented class used by the class-comment tests.
+# It has a second line.
+class RtDocumented
+end
+
 class CoreTest < Minitest::Test
   def setup
     Transcript.clear
@@ -873,6 +878,94 @@ class CoreTest < Minitest::Test
     big = (1..600).map(&:to_s).join("\n")
     assert_nil diff.lines(big, big.reverse)
     assert_equal "(too large to compare)\n", diff.unified(big, big.reverse)
+  end
+
+  # --- Class comments ---------------------------------------------------
+
+  DOC = "# A documented class used by the class-comment tests.\n# It has a second line.\n"
+
+  def test_split_comment
+    assert_equal ["# a\n# b\n", "class X\nend\n"], RubyTalk::Source.split_comment("# a\n# b\nclass X\nend\n")
+    assert_equal ["# a\n", "class X\nend\n"], RubyTalk::Source.split_comment("\n\n# a\nclass X\nend\n"), 'leading blanks skipped'
+    assert_equal ['', "class X\nend\n"], RubyTalk::Source.split_comment("class X\nend\n")
+    assert_equal ["# only\n", ''], RubyTalk::Source.split_comment("# only\n")
+    assert_equal ['', ''], RubyTalk::Source.split_comment('')
+  end
+
+  def test_class_comment_comes_from_the_source_file_for_ruby_classes
+    assert_equal DOC, RubyTalk::Reflection.class_comment(RtDocumented, @changes)
+    assert_equal "#{DOC}class RtDocumented < Object\nend\n", RubyTalk::Reflection.class_definition(RtDocumented)
+    assert_equal '', RubyTalk::Reflection.class_comment(String, @changes), 'C classes have no source file'
+    assert_equal "class String < Object\n  include Comparable\nend\n", RubyTalk::Reflection.class_definition(String)
+    assert_equal '', RubyTalk::Reflection.file_comment(Class.new), 'anonymous classes do not raise'
+  end
+
+  def test_magic_comments_are_not_class_comments
+    path = File.join(@dir, 'magic.rb')
+    File.write(path, "# frozen_string_literal: true\n# Real doc.\nclass RtMagic\nend\n")
+    load path
+    assert_equal "# Real doc.\n", RubyTalk::Reflection.file_comment(RtMagic)
+  ensure
+    drop_classes(:RtMagic)
+  end
+
+  def test_editing_the_comment_of_an_existing_class
+    shown = RubyTalk::Reflection.class_definition(RtDocumented)
+    assert_empty accept(shown).then { @changes.entries }, 'accepting it unchanged logs nothing'
+
+    out = accept("# New words.\nclass RtDocumented < Object\nend\n")
+    assert out.ok, out.message
+    entry = @changes.open_entry('RtDocumented', 'comment')
+    assert_equal "# New words.\nclass RtDocumented < Object\nend\n", entry.source
+    assert_equal "# New words.\n", RubyTalk::Reflection.class_comment(RtDocumented, @changes)
+    assert_equal "# New words.\nclass RtDocumented < Object\nend\n", RubyTalk::Reflection.class_definition(RtDocumented)
+
+    accept("# Newer words.\nclass RtDocumented < Object\nend\n")
+    assert_equal 1, @changes.entries.size, 'editing again replaces the comment entry'
+
+    accept("class RtDocumented < Object\nend\n") # cleared: back to the original
+    assert_nil @changes.open_entry('RtDocumented', 'comment')
+    assert_equal DOC, RubyTalk::Reflection.class_comment(RtDocumented, @changes)
+
+    accept("# New words.\nclass RtDocumented < Object\nend\n")
+    accept(RubyTalk::Reflection.file_comment(RtDocumented) + "class RtDocumented < Object\nend\n") # original text back
+    assert_empty @changes.entries
+  end
+
+  def test_comment_on_a_c_class_persists_across_a_restart
+    accept("# Strings of text.\nclass String < Object\n  include Comparable\nend\n")
+    assert_equal "# Strings of text.\n", RubyTalk::Reflection.class_comment(String, @changes)
+    assert_match(/\A# Strings of text\.\nclass String < Object\n  include Comparable\nend\n\z/,
+                 RubyTalk::Reflection.class_definition(String))
+    @changes.save!
+    script = <<~RUBY
+      $LOAD_PATH.unshift(#{File.expand_path('../lib', __dir__).inspect})
+      require 'rubytalk'
+      RubyTalk.setup(#{@dir.inspect})
+      print RubyTalk::Reflection.class_comment(String)
+    RUBY
+    out, status = Open3.capture2e(RbConfig.ruby, '-e', script)
+    assert status.success?, out
+    assert_equal "# Strings of text.\n", out.lines.last(1).join
+  end
+
+  def test_comment_of_a_class_you_created_travels_with_its_definition
+    accept("# Mine.\nclass RtCmt\nend\n")
+    assert_equal "# Mine.\nclass RtCmt\nend\n", RubyTalk::Reflection.class_definition(RtCmt)
+    accept("# Mine, revised.\nclass RtCmt\nend\n")
+    assert_equal "# Mine, revised.\nclass RtCmt\nend\n", RubyTalk::Reflection.class_definition(RtCmt)
+    assert_equal [:class], @changes.entries.map(&:kind)
+  ensure
+    drop_classes(:RtCmt)
+  end
+
+  def test_new_class_template_has_the_comment_above_the_class
+    assert_equal "# Describe NewClass here.\nclass NewClass < Object\nend\n", RubyTalk::Reflection.new_class_template
+    out = accept(RubyTalk::Reflection.new_class_template.sub('class NewClass', 'class RtFromTemplate'))
+    assert out.ok, out.message
+    assert_match(/\A# Describe NewClass here\.\nclass RtFromTemplate/, RubyTalk::Reflection.class_definition(RtFromTemplate))
+  ensure
+    drop_classes(:RtFromTemplate)
   end
 
   # --- Hierarchy --------------------------------------------------------

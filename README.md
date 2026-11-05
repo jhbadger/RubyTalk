@@ -144,6 +144,13 @@ locals alive after the stack unwinds. **Limits:** only the frame that raised has
 bindings for the others, which show source only); errors raised and rescued inside your code are
 recorded too (the last 100), which costs a little in code that raises very many exceptions.
 
+**Class comments.** The comment block directly above `class Foo` is the class comment, shown at the top
+of the definition pane. Edit it and Accept. For a class you created it is part of its definition. For
+a class that already existed, RubyTalk keeps your comment in `changes.rb` as a small replayable entry
+(the comment above the unchanged definition); for a library class written in Ruby the original RDoc
+comment from its source file is shown until you change it. Clear the comment (or put the original back)
+to return to the original. A new class starts from a template with a `# Describe NewClass here.` line.
+
 **Versions.** Accept no longer loses the old definition. Right-click a method (in the Browser or a
 Method List) > **Versions...** to see, newest first: the current definition, every earlier version
 kept in `changes.history`, and the **original library method** if RubyTalk has overridden or removed

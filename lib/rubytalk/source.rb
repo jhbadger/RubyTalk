@@ -53,6 +53,17 @@ module RubyTalk
       statements
     end
 
+    # [comment, rest]: the block of # comment lines at the top of +text+ (blank lines before
+    # it are skipped) and everything after it. The comment is "" when there is none.
+    def split_comment(text)
+      lines = text.lines
+      first = 0
+      first += 1 while first < lines.size && lines[first].strip.empty?
+      last = first
+      last += 1 while last < lines.size && lines[last].strip.start_with?('#')
+      [lines[first...last].join, lines[last..].join]
+    end
+
     # What does this single statement define?
     #   :def    -> name is the method name
     #   :defs   -> `def self.name`
