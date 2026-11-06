@@ -28,6 +28,8 @@ class ControlManager
     @active = {}   # window => controller the pointer is over
     @pressed = {}  # window => [view, controller] that got the mouse button down (it keeps the mouse)
     @focus = {}    # window => controller that has the keyboard (see Controller#wants_keyboard_focus?)
+    @popup_state = {} # window => { origin:, sticky: } while a PopUpMenu is showing
+    @swallow_up = {}  # windows whose next button release belongs to a menu click and goes nowhere
     @last_click = nil
     @clock = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
   end
@@ -57,6 +59,8 @@ class ControlManager
     @active.delete(window)
     @pressed.delete(window)
     @focus.delete(window)
+    @popup_state.delete(window)
+    @swallow_up.delete(window)
     window.release
     window.close_hook&.call
   end
@@ -71,9 +75,14 @@ class ControlManager
       @sensor.move_to(point)
       @sensor.press(button)
       @sensor.click_count = count_click(point, button)
+      next popup_down(window, point) if window.popup
+
       track(window, point)
       view, local = window.view_at(point)
       controller = view.controller
+      menu = controller.menu_for(button)
+      next show_popup(window, menu, point) if menu
+
       focus(window, controller) if controller.wants_keyboard_focus?
       @pressed[window] = [view, controller]
       deliver(controller) { |c| c.mouse_down(local, button) }
@@ -84,6 +93,8 @@ class ControlManager
     guarded(window) do
       point = Point.new(x, y)
       @sensor.move_to(point)
+      next window.popup.track(point) if window.popup
+
       track(window, point)
       if (captured = @pressed[window])
         view, controller = captured
@@ -99,6 +110,12 @@ class ControlManager
     guarded(window) do
       point = Point.new(x, y)
       @sensor.move_to(point)
+      if @swallow_up.delete(window)
+        @sensor.release(button)
+        next
+      end
+      next popup_up(window, point, button) if window.popup
+
       view, controller = @pressed[window] || window.view_at(point).then { |v, _| [v, v.controller] }
       deliver(controller) { |c| c.mouse_up(view.to_local(point), button) }
       @sensor.release(button)
@@ -120,6 +137,8 @@ class ControlManager
   def key(window, char, keysym = nil, state = 0)
     guarded(window) do
       @sensor.modifiers = state
+      next popup_key(window, keysym) if window.popup
+
       @sensor.key_pressed(char)
       target = @focus[window] || @active[window] || window.controller
       deliver(target) { |controller| controller.key_pressed(char, keysym) }
@@ -131,6 +150,8 @@ class ControlManager
   def command_key(window, keysym)
     handled = false
     guarded(window) do
+      next if window.popup
+
       target = @focus[window] || @active[window] || window.controller
       deliver(target) { |controller| handled = controller.command_key(keysym) ? true : false }
     end
@@ -140,6 +161,8 @@ class ControlManager
   # The wheel turned with the pointer at x, y; +lines+ is positive for down.
   def mouse_wheel(window, x, y, lines)
     guarded(window) do
+      next if window.popup
+
       view, local = window.view_at(Point.new(x, y))
       deliver(view.controller) { |controller| controller.mouse_wheel(local, lines) }
     end
@@ -149,6 +172,16 @@ class ControlManager
   def cursor_name(window)
     view = @active[window]&.view
     (view&.cursor || Cursor.normal).tk_name
+  end
+
+  # Show +menu+ over +window+ with the pointer at +point+ (window coordinates). Normally a controller's
+  # menu_for starts this; PopUpMenu#pop_up does it from code.
+  def show_popup(window, menu, point = @sensor.cursor_point)
+    menu.place_in(window, point)
+    window.popup = menu
+    menu.track(point)
+    @popup_state[window] = { origin: point, sticky: false }
+    menu
   end
 
   # --- drawing -----------------------------------------------------------------
@@ -183,6 +216,55 @@ class ControlManager
   def deliver(controller)
     yield controller
     controller.control_activity
+  end
+
+  # --- pop-up menu events: while a menu shows it gets everything -------------------------
+
+  # A press while the menu is open: only meaningful once it is a click menu.
+  def popup_down(window, point)
+    return unless @popup_state[window][:sticky]
+
+    @swallow_up[window] = true
+    index = window.popup.item_at(point)
+    index ? popup_choose(window, index) : popup_dismiss(window)
+  end
+
+  # The button that opened the menu was released. Moved since the press: choose what is under the
+  # pointer (or nothing). Not moved: leave the menu open as a click menu.
+  def popup_up(window, point, button)
+    @sensor.release(button)
+    state = @popup_state[window]
+    return if state[:sticky]
+
+    origin = state[:origin]
+    if (point.x - origin.x).abs >= 3 || (point.y - origin.y).abs >= 3
+      index = window.popup.item_at(point)
+      index ? popup_choose(window, index) : popup_dismiss(window)
+    else
+      state[:sticky] = true
+    end
+  end
+
+  def popup_key(window, keysym)
+    menu = window.popup
+    case keysym
+    when 'Escape' then popup_dismiss(window)
+    when 'Up' then menu.move_highlight(-1)
+    when 'Down' then menu.move_highlight(1)
+    when 'Return', 'KP_Enter' then menu.highlight ? popup_choose(window, menu.highlight) : popup_dismiss(window)
+    end
+  end
+
+  # Take the menu away, then run the choice (which may show another menu).
+  def popup_choose(window, index)
+    menu = window.popup
+    popup_dismiss(window)
+    menu.choose(index)
+  end
+
+  def popup_dismiss(window)
+    window.popup = nil
+    @popup_state.delete(window)
   end
 
   # Give +controller+ the keyboard (telling the one that had it).

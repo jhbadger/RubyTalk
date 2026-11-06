@@ -90,6 +90,46 @@ class Controller
   def control_activity; end
 end
 
+# A controller with a pop-up menu on each mouse button, Smalltalk-80's MouseMenuController. Set the menus
+# (PopUpMenu objects) and the window manager shows the one for the button pressed, instead of delivering the
+# press to #mouse_down:
+#
+#   controller.yellow_button_menu = PopUpMenu.new(['Clear', ['Undo', -> { model.undo }]]) { |i, label| ... }
+class MouseMenuController < Controller
+  def initialize(view = nil)
+    super
+    @menus = {}
+  end
+
+  def red_button_menu=(menu)
+    @menus[:red] = menu
+  end
+
+  def yellow_button_menu=(menu)
+    @menus[:yellow] = menu
+  end
+
+  def blue_button_menu=(menu)
+    @menus[:blue] = menu
+  end
+
+  def red_button_menu
+    @menus[:red]
+  end
+
+  def yellow_button_menu
+    @menus[:yellow]
+  end
+
+  def blue_button_menu
+    @menus[:blue]
+  end
+
+  def menu_for(button)
+    @menus[button]
+  end
+end
+
 # The controller of a window itself: does nothing by default (and subviews have their own).
 class StandardSystemController < Controller
 end
@@ -123,7 +163,7 @@ end
 
 # Clicking a row of a list view selects it; the scroll bar and the wheel scroll it; after a click the keys
 # Up, Down, Page Up, Page Down, Home and End move the selection.
-class ListController < Controller
+class ListController < MouseMenuController
   def wants_keyboard_focus?
     true
   end

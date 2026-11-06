@@ -163,19 +163,33 @@ end
 #   window.open
 class StandardSystemView < View
   attr_accessor :label, :display_hook, :close_hook
-  # The most recent picture of the window (a Form), after it is drawn.
-  attr_reader :form
+  # The most recent picture of the window (a Form), after it is drawn; and the PopUpMenu showing over it, if any.
+  attr_reader :form, :popup
 
   def initialize(label = 'Untitled', model = nil, extent = Point.new(300, 200))
     super(model, Rectangle.origin_extent(Point.new(0, 0), extent))
     @label = label
     @form = nil
+    @popup = nil
     @display_hook = nil
     @close_hook = nil
   end
 
   def default_controller_class
     StandardSystemController
+  end
+
+  # Show (or with nil, remove) a menu over the window; the window manager does this.
+  def popup=(menu)
+    @popup = menu
+    invalidate
+  end
+
+  # The window with any pop-up menu drawn on top.
+  def render
+    form = super
+    @popup&.display_on(form)
+    form
   end
 
   # Show the window. Returns the view.

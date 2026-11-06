@@ -422,6 +422,15 @@ form.show                          # any Form, in a window (redraws when you cal
   and copy. A `ListView` longer than its area shows a scroll bar (click or drag it); the wheel or two-finger scroll
   works over the list; and after you click a list the keys Up, Down, Page Up, Page Down, Home and End move the
   selection (it keeps the keyboard wherever the pointer goes, until you click another list or text field).
+* **Pop-up menus** (`PopUpMenu`, Smalltalk's yellow-button menu): `PopUpMenu.new(['Cut', '-', ['Paste', -> { paste }]]) { |index, label| ... }`;
+  a label is a string, an `[label, action]` pair (the action runs when it is chosen) or `'-'` for a separator.
+  A controller offers one by returning it from `menu_for(button)`; `MouseMenuController` (and so `ListController`)
+  has `red_button_menu=`, `yellow_button_menu=` and `blue_button_menu=`, and the window shows the menu **instead
+  of** delivering that button press: `list.controller.yellow_button_menu = PopUpMenu.new(%w[Open Delete]) { ... }`.
+  From code: `menu.pop_up(window, point)` (default: where the pointer is). It works as in Smalltalk (press,
+  drag to an item, release to choose; release off the menu cancels), and if you release without moving it stays
+  open as a click menu: click an item to choose it, click elsewhere or press Escape to dismiss, Up/Down/Return
+  work too. The menu is placed inside its window, so menus have to fit in the window.
 * **Keyboard, modifiers and clicks**: a controller that returns true from `wants_keyboard_focus?` gets the keys
   after you click its view; otherwise keys go to the controller under the pointer. `sensor.shift_pressed?` and
   `sensor.control_pressed?` give the modifier keys at the last mouse or key event, and `sensor.click_count` is 1, 2
@@ -454,8 +463,8 @@ window.add_subview(ButtonView.new('Bump', Rectangle.from(5, 30, 80, 24)) { meter
 window.open
 ```
 
-Limits: windows have a fixed size; there is no text-editing widget or pop-up menu yet; text is the built-in 5x7
-bitmap font; and the whole window is redrawn on any change (fine at these sizes).
+Limits: windows have a fixed size; there is no text-editing widget yet; menus cannot be taller than their
+window; text is the built-in 5x7 bitmap font; and the whole window is redrawn on any change (fine at these sizes).
 
 ## The Tk "Console" window
 

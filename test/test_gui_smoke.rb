@@ -287,6 +287,30 @@ class GuiSmokeTest < Minitest::Test
     assert_equal [[:key, 'Left', false], [:key, 'Left', true], [:command, 'c'], [:down, true]], seen
   end
 
+  def test_a_yellow_button_menu_works_through_tk_events
+    manager = ControlManager.new
+    manager.opener = ->(view) { GUI::GraphicsWindow.new(view, manager) }
+    chosen = []
+    view = StandardSystemView.new('Menu test', nil, Point.new(160, 120))
+    area = view.add_subview(View.new(nil, Rectangle.from(0, 0, 160, 120)))
+    controller = MouseMenuController.new(area)
+    controller.yellow_button_menu = PopUpMenu.new(%w[Alpha Beta]) { |_index, label| chosen << label }
+    area.controller = controller
+    view.open(manager)
+    win = GUI.windows.last
+    yellow = GUI::GraphicsWindow::BUTTON_NAMES.key(:yellow)
+    resting = Tk.photos[win.image]
+    press(win, "ButtonPress-#{yellow}", 50, 50)
+    refute_nil view.popup, 'the press showed the menu'
+    refute_equal resting, Tk.photos[win.image], 'and Tk was given the picture with the menu on it'
+    press(win, 'B2-Motion', 50, 50 + 12 + 3)
+    press(win, 'Motion', 50, 50 + 12 + 3)
+    press(win, "ButtonRelease-#{yellow}", 50, 50 + 12 + 3)
+    assert_equal ['Beta'], chosen
+    assert_nil view.popup
+    assert_equal resting, Tk.photos[win.image], 'the menu is gone from the picture'
+  end
+
   def test_closing_the_tk_window_closes_the_view
     manager, model, view, win = graphics_fixture
     assert_equal [view], manager.windows

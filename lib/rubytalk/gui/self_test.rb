@@ -21,7 +21,7 @@ module RubyTalk
         implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
         interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
         versions_window hierarchy_browser debugger class_comment test_runner find_and_replace
-        auto_indent_and_brackets remembered_window_layout file_out_and_in tk_console_hidden graphics_window scrolling_list
+        auto_indent_and_brackets remembered_window_layout file_out_and_in tk_console_hidden graphics_window scrolling_list popup_menu
       ].freeze
 
       def initialize(main)
@@ -583,6 +583,38 @@ module RubyTalk
         generate(win.canvas, '<Motion>', '-x', 114, '-y', 5)
         generate(win.canvas, '<KeyPress>', '-keysym', 'Down')
         assert_equal before + 1, list.selection
+      ensure
+        view&.close if ControlManager.instance.windows.include?(view)
+      end
+
+      # Hold the yellow button over a view with a menu, drag to an item and release (real mouse bindings),
+      # then show it as a click menu and choose with the keyboard.
+      def check_popup_menu
+        chosen = []
+        view = StandardSystemView.new('Menu self-test', nil, Point.new(160, 120))
+        area = view.add_subview(View.new(nil, Rectangle.from(0, 0, 160, 120)))
+        controller = MouseMenuController.new(area)
+        controller.yellow_button_menu = PopUpMenu.new(%w[Alpha Beta]) { |_index, label| chosen << label }
+        area.controller = controller
+        view.open
+        win = GUI.windows.last
+        win.canvas.focus
+        update
+        yellow = GraphicsWindow::BUTTON_NAMES.key(:yellow)
+
+        generate(win.canvas, "<ButtonPress-#{yellow}>", '-x', 50, '-y', 50)
+        assert(view.popup, 'pressing the yellow button did not show the menu (check the button numbering)')
+        generate(win.canvas, "<B#{yellow}-Motion>", '-x', 50, '-y', 65)
+        generate(win.canvas, "<ButtonRelease-#{yellow}>", '-x', 50, '-y', 65)
+        assert_equal ['Beta'], chosen
+        assert(view.popup.nil?, 'the menu did not go away after choosing')
+
+        generate(win.canvas, "<ButtonPress-#{yellow}>", '-x', 50, '-y', 50)
+        generate(win.canvas, "<ButtonRelease-#{yellow}>", '-x', 50, '-y', 50)
+        assert(view.popup, 'releasing without moving should leave a click menu open')
+        generate(win.canvas, '<KeyPress>', '-keysym', 'Down')
+        generate(win.canvas, '<KeyPress>', '-keysym', 'Return')
+        assert_equal %w[Beta Beta], chosen
       ensure
         view&.close if ControlManager.instance.windows.include?(view)
       end
