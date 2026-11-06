@@ -418,7 +418,16 @@ form.show                          # any Form, in a window (redraws when you cal
   `cursor_point` and `red_button_pressed?` etc. Buttons are named by colour as in Smalltalk: **red is the left
   button, yellow the middle, blue the right** (RubyTalk maps Tk's numbering, which differs on a Mac).
 * **Widgets**: `StringView` (fixed or computed text), `ButtonView` (acts when released inside it), `ListView`
-  (click to select), `FormView` (shows a Form). They are ordinary views and controllers you can read and copy.
+  (click to select; **scrolls**), `FormView` (shows a Form). They are ordinary views and controllers you can read
+  and copy. A `ListView` longer than its area shows a scroll bar (click or drag it); the wheel or two-finger scroll
+  works over the list; and after you click a list the keys Up, Down, Page Up, Page Down, Home and End move the
+  selection (it keeps the keyboard wherever the pointer goes, until you click another list or text field).
+* **Keyboard, modifiers and clicks**: a controller that returns true from `wants_keyboard_focus?` gets the keys
+  after you click its view; otherwise keys go to the controller under the pointer. `sensor.shift_pressed?` and
+  `sensor.control_pressed?` give the modifier keys at the last mouse or key event, and `sensor.click_count` is 1, 2
+  or 3 for a single, double or triple click. Command keys (Cmd-C, Ctrl-C elsewhere) go to
+  `Controller#command_key(keysym)`; return true if you used it. `mouse_wheel(point, lines)` receives the wheel
+  (positive scrolls down).
 * **Windows**: each StandardSystemView is a Tk window showing a picture of the view tree. The picture is
   redrawn after every event that changed something, and every 100 ms for changes made elsewhere (for example from
   a do it). An error in a controller or view is written to the Transcript, not raised into Tk.
@@ -445,8 +454,8 @@ window.add_subview(ButtonView.new('Bump', Rectangle.from(5, 30, 80, 24)) { meter
 window.open
 ```
 
-Limits: windows have a fixed size; `ListView` does not scroll; there is no text-editing widget or pop-up menu
-yet; text is the built-in 5x7 bitmap font; and the whole window is redrawn on any change (fine at these sizes).
+Limits: windows have a fixed size; there is no text-editing widget or pop-up menu yet; text is the built-in 5x7
+bitmap font; and the whole window is redrawn on any change (fine at these sizes).
 
 ## The Tk "Console" window
 

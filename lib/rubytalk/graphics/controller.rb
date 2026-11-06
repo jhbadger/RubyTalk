@@ -55,7 +55,33 @@ class Controller
   end
 
   # A key was typed. +char+ is the character ("" for keys such as the arrows), +keysym+ Tk's name for it.
+  # Modifier keys are in sensor.shift_pressed? and sensor.control_pressed?.
   def key_pressed(char, keysym = nil); end
+
+  # The wheel (or two-finger scroll) turned over the view: +lines+ is positive to scroll down.
+  def mouse_wheel(point, lines); end
+
+  # A command key combination (Cmd-C on a Mac, Ctrl-C elsewhere): +keysym+ is the key, e.g. "c". Return
+  # true if it was handled.
+  def command_key(keysym)
+    false
+  end
+
+  # Clicking this controller's view gives it the keyboard, which then goes to it wherever the pointer is
+  # (text fields want this). Others get the keys only while the pointer is over their view.
+  def wants_keyboard_focus?
+    false
+  end
+
+  def focus_gained; end
+
+  def focus_lost; end
+
+  # A PopUpMenu to show when +button+ (:red, :yellow, :blue) is pressed over the view, or nil. See
+  # MouseMenuController.
+  def menu_for(_button)
+    nil
+  end
 
   def control_initialize; end
 
@@ -95,9 +121,45 @@ class ButtonController < Controller
   end
 end
 
-# Clicking a row of a list view selects it.
+# Clicking a row of a list view selects it; the scroll bar and the wheel scroll it; after a click the keys
+# Up, Down, Page Up, Page Down, Home and End move the selection.
 class ListController < Controller
+  def wants_keyboard_focus?
+    true
+  end
+
   def mouse_down(point, button)
-    view.select_at(point) if button == :red
+    return unless button == :red
+
+    if view.in_scrollbar?(point)
+      @scrolling = true
+      view.scroll_to_point(point)
+    else
+      view.select_at(point)
+    end
+  end
+
+  def mouse_move(point)
+    view.scroll_to_point(point) if @scrolling
+  end
+
+  def mouse_up(_point, _button)
+    @scrolling = false
+  end
+
+  def mouse_wheel(_point, lines)
+    view.scroll_by(lines)
+  end
+
+  def key_pressed(_char, keysym = nil)
+    page = [view.visible_rows - 1, 1].max
+    case keysym
+    when 'Up' then view.move_selection(-1)
+    when 'Down' then view.move_selection(1)
+    when 'Prior' then view.move_selection(-page)
+    when 'Next' then view.move_selection(page)
+    when 'Home' then view.select_first
+    when 'End' then view.select_last
+    end
   end
 end

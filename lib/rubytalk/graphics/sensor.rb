@@ -10,13 +10,29 @@
 class InputSensor
   BUTTONS = %i[red yellow blue].freeze
 
+  SHIFT = 0x1
+  CONTROL = 0x4
+
   # The mouse position in the window it is over (window coordinates, not the view's).
   attr_reader :cursor_point, :last_key
+  # The modifier keys held at the last mouse or key event (Tk's state bits), and how many times in a row
+  # the last mouse button press hit the same spot (1, 2 or 3: a double or triple click).
+  attr_accessor :modifiers, :click_count
 
   def initialize
     @cursor_point = Point.new(0, 0)
     @down = []
     @last_key = nil
+    @modifiers = 0
+    @click_count = 1
+  end
+
+  def shift_pressed?
+    (@modifiers & SHIFT) != 0
+  end
+
+  def control_pressed?
+    (@modifiers & CONTROL) != 0
   end
 
   def move_to(point)

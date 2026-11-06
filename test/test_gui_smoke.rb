@@ -243,6 +243,50 @@ class GuiSmokeTest < Minitest::Test
     assert_equal :leave, log.last
   end
 
+  def scrolling_graphics_fixture(count = 30)
+    manager = ControlManager.new
+    manager.opener = ->(view) { GUI::GraphicsWindow.new(view, manager) }
+    view = StandardSystemView.new('List test', nil, Point.new(120, 64))
+    list = view.add_subview(ListView.new(Array.new(count) { |i| "item #{i}" }, Rectangle.from(0, 0, 120, 64)))
+    view.open(manager)
+    [manager, view, list, GUI.windows.last]
+  end
+
+  def test_tk_wheel_events_scroll_the_list_in_each_platforms_units
+    _manager, _view, list, win = scrolling_graphics_fixture
+    tk('event', 'generate', win.canvas.path, '<MouseWheel>', '-x', '20', '-y', '20', '-delta', '-1')
+    assert_equal 1, list.top, 'Mac and X11 report small steps: a negative delta scrolls down a line'
+    tk('event', 'generate', win.canvas.path, '<MouseWheel>', '-x', '20', '-y', '20', '-delta', '1')
+    assert_equal 0, list.top, 'positive is up'
+    tk('event', 'generate', win.canvas.path, '<MouseWheel>', '-x', '20', '-y', '20', '-delta', '-120')
+    assert_equal 3, list.top, 'Windows reports multiples of 120: one notch is three lines'
+    tk('event', 'generate', win.canvas.path, '<Button-5>', '-x', '20', '-y', '20')
+    assert_equal 6, list.top, 'X11 wheel down is button 5'
+    tk('event', 'generate', win.canvas.path, '<Button-4>', '-x', '20', '-y', '20')
+    assert_equal 3, list.top
+  end
+
+  def test_tk_key_events_carry_the_modifier_state_and_command_keys_have_their_own_binding
+    manager = ControlManager.new
+    manager.opener = ->(view) { GUI::GraphicsWindow.new(view, manager) }
+    seen = []
+    view = StandardSystemView.new('Mods', nil, Point.new(60, 60))
+    view.controller = Class.new(Controller) do
+      define_method(:key_pressed) { |_char, keysym| seen << [:key, keysym, sensor.shift_pressed?] }
+      define_method(:command_key) { |keysym| seen << [:command, keysym]; true }
+      define_method(:mouse_down) { |_point, _button| seen << [:down, sensor.shift_pressed?] }
+    end.new(view)
+    view.open(manager)
+    win = GUI.windows.last
+    ControlManager.stub(:instance, manager) do
+      tk('event', 'generate', win.canvas.path, '<KeyPress>', '-keysym', 'Left', '-state', '0')
+      tk('event', 'generate', win.canvas.path, '<KeyPress>', '-keysym', 'Left', '-state', '1')
+      tk('event', 'generate', win.canvas.path, "<#{GUI::MODIFIER}-Key>", '-keysym', 'c')
+      tk('event', 'generate', win.canvas.path, '<ButtonPress-1>', '-x', '5', '-y', '5', '-state', '1')
+    end
+    assert_equal [[:key, 'Left', false], [:key, 'Left', true], [:command, 'c'], [:down, true]], seen
+  end
+
   def test_closing_the_tk_window_closes_the_view
     manager, model, view, win = graphics_fixture
     assert_equal [view], manager.windows

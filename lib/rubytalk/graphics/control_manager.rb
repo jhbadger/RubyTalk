@@ -27,6 +27,21 @@ class ControlManager
     @opener = nil
     @active = {}   # window => controller the pointer is over
     @pressed = {}  # window => [view, controller] that got the mouse button down (it keeps the mouse)
+    @focus = {}    # window => controller that has the keyboard (see Controller#wants_keyboard_focus?)
+    @last_click = nil
+    @clock = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
+  end
+
+  # How quickly (seconds) and how close (pixels) a second press must be to count as a double click.
+  DOUBLE_CLICK_TIME = 0.4
+  DOUBLE_CLICK_DISTANCE = 4
+
+  # The time source for click counting (tests replace it).
+  attr_accessor :clock
+
+  # The controller that currently has the keyboard in +window+, if any.
+  def focus_controller(window)
+    @focus[window]
   end
 
   def open(window)
@@ -41,21 +56,27 @@ class ControlManager
 
     @active.delete(window)
     @pressed.delete(window)
+    @focus.delete(window)
     window.release
     window.close_hook&.call
   end
 
   # --- events from a window --------------------------------------------------
 
-  def mouse_down(window, x, y, button)
+  # +state+ is Tk's modifier bit mask (shift is 1, control 4), read by controllers through the sensor.
+  def mouse_down(window, x, y, button, state = 0)
     guarded(window) do
       point = Point.new(x, y)
+      @sensor.modifiers = state
       @sensor.move_to(point)
       @sensor.press(button)
+      @sensor.click_count = count_click(point, button)
       track(window, point)
       view, local = window.view_at(point)
-      @pressed[window] = [view, view.controller]
-      deliver(view.controller) { |controller| controller.mouse_down(local, button) }
+      controller = view.controller
+      focus(window, controller) if controller.wants_keyboard_focus?
+      @pressed[window] = [view, controller]
+      deliver(controller) { |c| c.mouse_down(local, button) }
     end
   end
 
@@ -94,11 +115,33 @@ class ControlManager
     end
   end
 
-  def key(window, char, keysym = nil)
+  # A key was typed. It goes to the controller with the keyboard focus (the last text field or list
+  # clicked), else to the one under the pointer, else to the window's own.
+  def key(window, char, keysym = nil, state = 0)
     guarded(window) do
+      @sensor.modifiers = state
       @sensor.key_pressed(char)
-      target = @active[window] || window.controller
+      target = @focus[window] || @active[window] || window.controller
       deliver(target) { |controller| controller.key_pressed(char, keysym) }
+    end
+  end
+
+  # Cmd-<key> (Ctrl-<key> off a Mac), e.g. "c": to the same controller as typing. Returns true if it was
+  # handled.
+  def command_key(window, keysym)
+    handled = false
+    guarded(window) do
+      target = @focus[window] || @active[window] || window.controller
+      deliver(target) { |controller| handled = controller.command_key(keysym) ? true : false }
+    end
+    handled
+  end
+
+  # The wheel turned with the pointer at x, y; +lines+ is positive for down.
+  def mouse_wheel(window, x, y, lines)
+    guarded(window) do
+      view, local = window.view_at(Point.new(x, y))
+      deliver(view.controller) { |controller| controller.mouse_wheel(local, lines) }
     end
   end
 
@@ -140,6 +183,31 @@ class ControlManager
   def deliver(controller)
     yield controller
     controller.control_activity
+  end
+
+  # Give +controller+ the keyboard (telling the one that had it).
+  def focus(window, controller)
+    previous = @focus[window]
+    return if previous.equal?(controller)
+
+    previous&.focus_lost
+    @focus[window] = controller
+    controller.focus_gained
+  end
+
+  # 1, 2 or 3: how many presses in a row at the same place, quickly enough to be a double or triple click.
+  def count_click(point, button)
+    now = @clock.call
+    last = @last_click
+    count = if last && last[:button] == button && now - last[:time] <= DOUBLE_CLICK_TIME &&
+               (point.x - last[:point].x).abs <= DOUBLE_CLICK_DISTANCE &&
+               (point.y - last[:point].y).abs <= DOUBLE_CLICK_DISTANCE
+              [last[:count] + 1, 3].min
+            else
+              1
+            end
+    @last_click = { time: now, point: point, button: button, count: count }
+    count
   end
 
   # Run an event handler: an error in a controller is reported in the Transcript, never raised into Tk.

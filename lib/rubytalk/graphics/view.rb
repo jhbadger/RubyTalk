@@ -273,20 +273,24 @@ class ButtonView < View
   end
 end
 
-# A scrolling-free list of strings with one selected row. Clicking selects; the optional block (or
-# #on_select) is called with the index and the item.
+# A list of strings with one selected row, scrolling when there are more than fit. Click a row to select it;
+# the wheel, the scroll bar and the Up, Down, Page Up, Page Down, Home and End keys (after clicking the list)
+# move through it. The optional block (or #on_select) is called with the index and the item.
 #
 #   ListView.new(%w[red green blue], Rectangle.from(10, 10, 120, 100)) { |index, item| ... }
 class ListView < View
+  include Scrollable
+
   ROW_HEIGHT = 12
 
-  attr_reader :items, :selection
+  attr_reader :items, :selection, :top
   attr_accessor :on_select
 
   def initialize(items = [], bounds = Rectangle.from(0, 0, 120, 100), &on_select)
     super(nil, bounds)
     @items = items.map(&:to_s)
     @selection = nil
+    @top = 0
     @on_select = on_select
     @border_width = 1
   end
@@ -298,11 +302,18 @@ class ListView < View
   def items=(list)
     @items = list.map(&:to_s)
     @selection = nil
+    self.scroll_top = @top
     invalidate
+  end
+
+  # How many whole rows fit.
+  def visible_rows
+    [(height - 4).div(ROW_HEIGHT), 0].max
   end
 
   def selection=(index)
     @selection = index && index.between?(0, @items.size - 1) ? index : nil
+    ensure_visible(@selection) if @selection
     invalidate
   end
 
@@ -310,26 +321,82 @@ class ListView < View
     @selection && @items[@selection]
   end
 
+  # Scroll just enough to show row +index+.
+  def ensure_visible(index)
+    if index < @top
+      self.scroll_top = index
+    elsif index >= @top + visible_rows
+      self.scroll_top = index - visible_rows + 1
+    end
+  end
+
+  def scroll_by(rows)
+    self.scroll_top = @top + rows
+  end
+
   # Select the row under +point+ (view coordinates) and tell the block.
   def select_at(point)
-    index = (point.y - 2).div(ROW_HEIGHT)
-    return unless index.between?(0, @items.size - 1)
+    index = @top + (point.y - 2).div(ROW_HEIGHT)
+    return unless index.between?(0, @items.size - 1) && point.y >= 2
 
-    self.selection = index
-    @on_select&.call(index, @items[index])
+    choose(index)
+  end
+
+  # Move the selection by +delta+ rows (the first press selects the first row).
+  def move_selection(delta)
+    return if @items.empty?
+
+    choose((@selection ? @selection + delta : 0).clamp(0, @items.size - 1))
+  end
+
+  def select_first
+    choose(0) unless @items.empty?
+  end
+
+  def select_last
+    choose(@items.size - 1) unless @items.empty?
+  end
+
+  # --- Scrollable ----------------------------------------------------------
+
+  def scroll_total
+    @items.size
+  end
+
+  def scroll_visible
+    visible_rows
+  end
+
+  def scroll_top
+    @top
+  end
+
+  def scroll_top=(row)
+    @top = row.clamp(0, max_scroll_top)
+    invalidate
   end
 
   def display_view(form)
-    @items.each_with_index do |item, index|
-      top = 2 + (index * ROW_HEIGHT)
-      break if top > height
+    text_width = scrollbar_visible? ? width - Scrollable::SCROLLBAR_WIDTH - 3 : width - 2
+    visible_rows.times do |row|
+      index = @top + row
+      break if index >= @items.size
 
+      y = 2 + (row * ROW_HEIGHT)
       if index == @selection
-        form.fill(Rectangle.from(1, top - 1, [width - 2, 0].max, ROW_HEIGHT), foreground)
-        form.draw_string(item, Point.new(4, top), color: background)
+        form.fill(Rectangle.from(1, y - 1, [text_width, 0].max, ROW_HEIGHT), foreground)
+        form.draw_string(@items[index], Point.new(4, y), color: background)
       else
-        form.draw_string(item, Point.new(4, top), color: foreground)
+        form.draw_string(@items[index], Point.new(4, y), color: foreground)
       end
     end
+    draw_scrollbar(form)
+  end
+
+  private
+
+  def choose(index)
+    self.selection = index
+    @on_select&.call(index, @items[index])
   end
 end

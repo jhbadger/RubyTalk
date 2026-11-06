@@ -21,7 +21,7 @@ module RubyTalk
         implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
         interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
         versions_window hierarchy_browser debugger class_comment test_runner find_and_replace
-        auto_indent_and_brackets remembered_window_layout file_out_and_in tk_console_hidden graphics_window
+        auto_indent_and_brackets remembered_window_layout file_out_and_in tk_console_hidden graphics_window scrolling_list
       ].freeze
 
       def initialize(main)
@@ -554,6 +554,35 @@ module RubyTalk
         assert_equal 1, model.count, 'releasing off the button must not run it'
         view.close
         assert_equal '0', Tk.tk_call('winfo', 'exists', win.window.path).to_s, 'closing the view did not close its window'
+      ensure
+        view&.close if ControlManager.instance.windows.include?(view)
+      end
+
+      # A list longer than its window, on real Tk: the wheel, a press on the scroll bar, a click and the
+      # arrow keys (which go to the clicked list wherever the pointer is).
+      def check_scrolling_list
+        view = StandardSystemView.new('Scrolling self-test', nil, Point.new(120, 64))
+        list = view.add_subview(ListView.new(Array.new(40) { |i| "row #{i}" }, Rectangle.from(0, 0, 120, 64)))
+        view.open
+        win = GUI.windows.last
+        win.canvas.focus
+        update
+        assert(list.scrollbar_visible?, 'a 40 row list in a 64 pixel window needs a scroll bar')
+
+        generate(win.canvas, '<MouseWheel>', '-x', 20, '-y', 20, '-delta', -1)
+        assert(list.top.positive?, "the wheel did not scroll the list (top is #{list.top})")
+        generate(win.canvas, '<MouseWheel>', '-x', 20, '-y', 20, '-delta', 1)
+        generate(win.canvas, '<ButtonPress-1>', '-x', 114, '-y', 60)
+        generate(win.canvas, '<ButtonRelease-1>', '-x', 114, '-y', 60)
+        assert(list.top > 20, "a press low on the scroll bar did not scroll there (top is #{list.top})")
+
+        generate(win.canvas, '<ButtonPress-1>', '-x', 20, '-y', 8)
+        generate(win.canvas, '<ButtonRelease-1>', '-x', 20, '-y', 8)
+        assert(list.selection, 'clicking a row did not select it')
+        before = list.selection
+        generate(win.canvas, '<Motion>', '-x', 114, '-y', 5)
+        generate(win.canvas, '<KeyPress>', '-keysym', 'Down')
+        assert_equal before + 1, list.selection
       ensure
         view&.close if ControlManager.instance.windows.include?(view)
       end

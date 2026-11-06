@@ -1118,6 +1118,268 @@ class MvcTest < Minitest::Test
     assert_equal 0, selected[3, 3], 'the selection bar is solid foreground'
   end
 
+  # --- Scrolling lists ----------------------------------------------------------------------
+
+  def numbers(count)
+    Array.new(count) { |i| "item #{i}" }
+  end
+
+  def scrolling_window(count = 30, chosen = [])
+    top = window(pt(100, 64))
+    list = ListView.new(numbers(count), Rectangle.from(0, 0, 100, 64)) { |index, item| chosen << [index, item] }
+    top.add_subview(list)
+    top.open(@manager)
+    [top, list]
+  end
+
+  def test_a_list_shows_only_the_rows_that_fit_and_scrolls
+    top, list = scrolling_window
+    assert_equal 5, list.visible_rows, '64 pixels high: (64 - 4) / 12'
+    assert_equal 0, list.top
+    first_page = top.form.to_ascii.join
+    list.scroll_by(3)
+    assert_equal 3, list.top
+    @manager.refresh(top)
+    refute_equal first_page, top.form.to_ascii.join, 'the picture scrolled'
+    list.scroll_by(1000)
+    assert_equal 25, list.top, 'stops when the last row is at the bottom'
+    list.scroll_by(-1000)
+    assert_equal 0, list.top
+    assert_equal 30, list.scroll_total
+  end
+
+  def test_the_scroll_bar_appears_only_when_needed
+    _top, long = scrolling_window(30)
+    _top2, short = scrolling_window(3)
+    assert long.scrollbar_visible?
+    refute short.scrollbar_visible?
+    bar = long.scrollbar_rect
+    assert_operator long.render[bar.left + 2, bar.top + 2], :!=, 0xFFFFFF, 'something is drawn there'
+    assert_equal 0xFFFFFF, short.render[short.width - 4, 4], 'but not for a short list'
+  end
+
+  def test_the_thumb_reflects_the_scroll_position
+    _top, list = scrolling_window(30)
+    start = list.thumb_rect
+    assert_equal list.scrollbar_rect.top, start.top, 'at the top'
+    assert_in_delta list.scrollbar_rect.height * 5 / 30.0, start.height, 2
+    list.scroll_by(1000)
+    finish = list.thumb_rect
+    assert_equal list.scrollbar_rect.bottom, finish.bottom, 'at the bottom'
+    list.scroll_by(-1000)
+    list.scroll_to_point(pt(95, 1000))
+    assert_equal 25, list.top, 'dragging the thumb to the bottom'
+    list.scroll_to_point(pt(95, -50))
+    assert_equal 0, list.top
+    list.scroll_to_point(pt(95, list.scrollbar_rect.center.y))
+    assert_in_delta 12, list.top, 2, 'the middle'
+  end
+
+  def test_clicking_and_dragging_the_scroll_bar
+    top, list = scrolling_window(30)
+    chosen = []
+    list.on_select = ->(index, _item) { chosen << index }
+    @manager.mouse_down(top, 95, 60, :red)
+    assert_operator list.top, :>, 15, 'a press low on the bar scrolls there'
+    assert_empty chosen, 'and does not select a row'
+    @manager.mouse_move(top, 95, 5)
+    assert_equal 0, list.top, 'dragging follows the pointer'
+    @manager.mouse_move(top, 20, 30) # off the bar, still dragging: still scrolls (to the middle)
+    middle = list.top
+    assert_in_delta 12, middle, 2
+    @manager.mouse_up(top, 20, 30, :red)
+    @manager.mouse_move(top, 95, 60) # no longer dragging: the list stays where it was
+    assert_equal middle, list.top
+  end
+
+  def test_the_wheel_scrolls_the_list_under_the_pointer
+    top, list = scrolling_window
+    @manager.mouse_wheel(top, 20, 20, 3)
+    assert_equal 3, list.top
+    @manager.mouse_wheel(top, 20, 20, -1)
+    assert_equal 2, list.top
+    @manager.mouse_wheel(top, 20, 20, -50)
+    assert_equal 0, list.top
+    other = window(pt(50, 50))
+    other.open(@manager)
+    @manager.mouse_wheel(other, 5, 5, 3) # a view with no use for it: nothing happens, no error
+  end
+
+  def test_clicking_a_row_of_a_scrolled_list_selects_that_row
+    chosen = []
+    top, list = scrolling_window(30, chosen)
+    list.scroll_by(10)
+    @manager.mouse_down(top, 20, 2 + 6, :red)
+    @manager.mouse_up(top, 20, 8, :red)
+    assert_equal [[10, 'item 10']], chosen
+    @manager.mouse_down(top, 20, 2 + (12 * 2) + 3, :red)
+    assert_equal [10, 12], chosen.map(&:first)
+    assert_equal 12, list.selection
+    @manager.mouse_down(top, 20, 1, :red) # above the first row: nothing
+    assert_equal 2, chosen.size
+  end
+
+  def test_keys_move_the_selection_and_scroll_to_keep_it_visible
+    chosen = []
+    top, list = scrolling_window(30, chosen)
+    @manager.mouse_down(top, 20, 8, :red) # clicking the list gives it the keyboard
+    @manager.mouse_up(top, 20, 8, :red)
+    assert_equal 0, list.selection
+    @manager.mouse_move(top, 95, 5) # the pointer wanders off the rows: keys still go to the list
+    @manager.key(top, '', 'Down')
+    @manager.key(top, '', 'Down')
+    assert_equal 2, list.selection
+    5.times { @manager.key(top, '', 'Down') }
+    assert_equal 7, list.selection
+    assert_equal 3, list.top, 'scrolled so row 7 is the last one showing (rows 3 to 7)'
+    @manager.key(top, '', 'Up')
+    assert_equal 6, list.selection
+    @manager.key(top, '', 'Next') # page down: 4 rows
+    assert_equal 10, list.selection
+    @manager.key(top, '', 'Prior')
+    assert_equal 6, list.selection
+    @manager.key(top, '', 'End')
+    assert_equal 29, list.selection
+    assert_equal 25, list.top
+    @manager.key(top, '', 'Home')
+    assert_equal 0, list.selection
+    assert_equal 0, list.top
+    @manager.key(top, '', 'Up')
+    assert_equal 0, list.selection, 'stops at the first row'
+    assert_equal chosen.last, [0, 'item 0']
+    assert_equal list, @manager.focus_controller(top).view
+  end
+
+  def test_the_first_down_arrow_selects_the_first_row
+    top, list = scrolling_window
+    @manager.mouse_down(top, 95, 5, :red) # on the scroll bar: focus, but no row selected
+    @manager.mouse_up(top, 95, 5, :red)
+    assert_nil list.selection
+    @manager.key(top, '', 'Down')
+    assert_equal 0, list.selection
+  end
+
+  def test_setting_the_selection_in_code_scrolls_to_it
+    _top, list = scrolling_window
+    list.selection = 20
+    assert_equal 16, list.top
+    list.selection = 2
+    assert_equal 2, list.top
+    list.items = numbers(3)
+    assert_nil list.selection
+    assert_equal 0, list.top, 'a shorter list cannot stay scrolled'
+    assert_empty ListView.new([], Rectangle.from(0, 0, 50, 50)).tap(&:select_first).items
+  end
+
+  # --- Keyboard focus, modifiers and clicks --------------------------------------------------
+
+  def test_focus_follows_clicks_on_controllers_that_want_it
+    top = window(pt(100, 100))
+    lists = [ListView.new(%w[a b], Rectangle.from(0, 0, 50, 100)), ListView.new(%w[c d], Rectangle.from(50, 0, 50, 100))]
+    lists.each { |list| top.add_subview(list) }
+    button = top.add_subview(ButtonView.new('x', Rectangle.from(0, 80, 20, 20)))
+    top.open(@manager)
+    assert_nil @manager.focus_controller(top)
+    @manager.mouse_down(top, 10, 5, :red)
+    @manager.mouse_up(top, 10, 5, :red)
+    assert_same lists[0].controller, @manager.focus_controller(top)
+    @manager.mouse_down(top, 60, 5, :red)
+    @manager.mouse_up(top, 60, 5, :red)
+    assert_same lists[1].controller, @manager.focus_controller(top)
+    @manager.mouse_down(top, 5, 85, :red) # a button does not want the keyboard: focus stays
+    @manager.mouse_up(top, 5, 85, :red)
+    assert_same lists[1].controller, @manager.focus_controller(top)
+    refute button.controller.wants_keyboard_focus?
+    @manager.mouse_move(top, 10, 50)
+    @manager.key(top, '', 'Down') # goes to the focused list, not the one under the pointer
+    assert_equal 1, lists[1].selection, 'the click selected row 0, so Down moves to row 1'
+    assert_equal 0, lists[0].selection, 'the other list kept its own selection (from the earlier click)'
+    top.close(@manager)
+    assert_nil @manager.focus_controller(top)
+  end
+
+  def test_focus_gained_and_lost_are_announced
+    log = []
+    top = window(pt(100, 50))
+    listener = lambda do |name|
+      Class.new(ListController) do
+        define_method(:focus_gained) { log << [name, :gained] }
+        define_method(:focus_lost) { log << [name, :lost] }
+      end
+    end
+    a = top.add_subview(ListView.new(%w[a], Rectangle.from(0, 0, 50, 50)))
+    b = top.add_subview(ListView.new(%w[b], Rectangle.from(50, 0, 50, 50)))
+    a.controller = listener.call(:a).new(a)
+    b.controller = listener.call(:b).new(b)
+    top.open(@manager)
+    @manager.mouse_down(top, 10, 5, :red)
+    @manager.mouse_up(top, 10, 5, :red)
+    @manager.mouse_down(top, 10, 5, :red) # same one again: no new announcement
+    @manager.mouse_up(top, 10, 5, :red)
+    @manager.mouse_down(top, 60, 5, :red)
+    assert_equal [[:a, :gained], [:a, :lost], [:b, :gained]], log
+  end
+
+  def test_modifier_keys_reach_the_sensor
+    seen = []
+    controller = Class.new(Controller) do
+      define_method(:key_pressed) { |_char, keysym| seen << [keysym, sensor.shift_pressed?, sensor.control_pressed?] }
+    end
+    top = window
+    top.controller = controller.new(top)
+    top.open(@manager)
+    ControlManager.stub(:instance, @manager) do
+      @manager.key(top, '', 'Left', 0)
+      @manager.key(top, '', 'Left', InputSensor::SHIFT)
+      @manager.key(top, '', 'Left', InputSensor::SHIFT | InputSensor::CONTROL)
+    end
+    assert_equal [['Left', false, false], ['Left', true, false], ['Left', true, true]], seen
+    @manager.mouse_down(top, 1, 1, :red, InputSensor::SHIFT)
+    assert @manager.sensor.shift_pressed?, 'mouse events carry the modifiers too'
+  end
+
+  def test_double_and_triple_clicks_are_counted
+    now = 100.0
+    @manager.clock = -> { now }
+    top = window
+    top.open(@manager)
+    counts = lambda do |x, y, button = :red|
+      @manager.mouse_down(top, x, y, button)
+      @manager.mouse_up(top, x, y, button)
+      @manager.sensor.click_count
+    end
+    assert_equal 1, counts.call(10, 10)
+    now += 0.2
+    assert_equal 2, counts.call(11, 10), 'quickly, nearly the same place'
+    now += 0.2
+    assert_equal 3, counts.call(10, 11)
+    now += 0.2
+    assert_equal 3, counts.call(10, 10), 'it stops at 3'
+    now += 0.2
+    assert_equal 3, counts.call(10, 10)
+    now += 1.0
+    assert_equal 1, counts.call(10, 10), 'too slow'
+    now += 0.1
+    assert_equal 1, counts.call(60, 10), 'too far'
+    now += 0.1
+    assert_equal 1, counts.call(60, 10, :yellow), 'a different button'
+  end
+
+  def test_command_keys_go_to_the_focused_controller_and_report_whether_they_were_used
+    handled = []
+    controller = Class.new(Controller) do
+      define_method(:command_key) { |keysym| handled << keysym; keysym == 'c' }
+      define_method(:wants_keyboard_focus?) { true }
+    end
+    top = window
+    top.controller = controller.new(top)
+    top.open(@manager)
+    assert_equal true, @manager.command_key(top, 'c')
+    assert_equal false, @manager.command_key(top, 'q')
+    assert_equal %w[c q], handled
+    assert_equal false, window.controller.command_key('c'), 'the default is "not handled"'
+  end
+
   # --- The example programs ---------------------------------------------------------------
 
   def test_counter_example_counts_through_its_buttons

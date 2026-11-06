@@ -202,6 +202,7 @@ module Tk
       pattern = args[3].to_s.delete('<>')
       options = args[4..].each_slice(2).to_h
       fields = { '%x' => options['-x'], '%y' => options['-y'], '%K' => options['-keysym'],
+                 '%D' => options['-delta'], '%s' => options['-state'],
                  '%A' => options['-keysym'].to_s.size == 1 ? options['-keysym'] : '' }
       widget.fire(pattern, fields) if widget.bindings.key?(pattern)
       ''

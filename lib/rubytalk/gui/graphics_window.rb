@@ -50,15 +50,27 @@ module RubyTalk
       # with the %-codes (as strings).
       def bind_events
         BUTTON_NAMES.each do |number, button|
-          on("ButtonPress-#{number}", '%x', '%y') { |x, y| @manager.mouse_down(@view, x.to_i, y.to_i, button) }
+          on("ButtonPress-#{number}", '%x', '%y', '%s') do |x, y, state|
+            @manager.mouse_down(@view, x.to_i, y.to_i, button, state.to_i)
+          end
           on("ButtonRelease-#{number}", '%x', '%y') { |x, y| @manager.mouse_up(@view, x.to_i, y.to_i, button) }
           on("B#{number}-Motion", '%x', '%y') { |x, y| @manager.mouse_move(@view, x.to_i, y.to_i) }
         end
         on('Motion', '%x', '%y') { |x, y| @manager.mouse_move(@view, x.to_i, y.to_i) }
         on('Leave') { @manager.mouse_leave(@view) }
         on('Enter') { @canvas.focus }
-        on('KeyPress', '%K', '%A') { |keysym, char| @manager.key(@view, char.to_s, keysym.to_s) }
+        on('KeyPress', '%K', '%A', '%s') { |keysym, char, state| @manager.key(@view, char.to_s, keysym.to_s, state.to_i) }
+        # Cmd-<key> (Ctrl-<key> off a Mac) is more specific than KeyPress, so it comes here, not above.
+        on("#{MODIFIER}-Key", '%K') { |keysym| @manager.command_key(@view, keysym.to_s) }
+        on('MouseWheel', '%x', '%y', '%D') { |x, y, delta| @manager.mouse_wheel(@view, x.to_i, y.to_i, wheel_lines(delta.to_i)) }
+        on('Button-4', '%x', '%y') { |x, y| @manager.mouse_wheel(@view, x.to_i, y.to_i, -3) } # X11 wheel up
+        on('Button-5', '%x', '%y') { |x, y| @manager.mouse_wheel(@view, x.to_i, y.to_i, 3) }  # X11 wheel down
         @window.protocol('WM_DELETE_WINDOW') { GUI.safely { @manager.close(@view) } }
+      end
+
+      # Tk's wheel delta is positive for up: a Mac and X11 give small steps, Windows multiples of 120.
+      def wheel_lines(delta)
+        -(delta.abs >= 120 ? (delta / 120) * 3 : delta)
       end
 
       def on(event, *fields)

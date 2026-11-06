@@ -18,6 +18,7 @@ require_relative 'graphics/cursor'
 # The Model-View-Controller framework.
 require_relative 'graphics/model'
 require_relative 'graphics/sensor'
+require_relative 'graphics/scrollable'
 require_relative 'graphics/view'
 require_relative 'graphics/controller'
 require_relative 'graphics/control_manager'
