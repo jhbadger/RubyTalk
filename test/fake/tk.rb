@@ -61,6 +61,7 @@ module Tk
       return wm_call(args) if first == 'wm' && args[1] == 'geometry'
       return generate_event(args) if first == 'event' && args[1] == 'generate'
       return image_call(args) if first == 'image'
+      return console_call(args) if first == 'console'
       return chooser_call(args) if first == 'tk_chooseDirectory'
       return dialog_call(args) if %w[tk_getSaveFile tk_getOpenFile].include?(first)
       return define_proc(args) if first == 'proc'
@@ -142,6 +143,23 @@ module Tk
       raise "fake Tk: unsupported proc body #{body.inspect}" unless body.include?('wm protocol . WM_DELETE_WINDOW')
 
       root.protocols['WM_DELETE_WINDOW']&.call
+      ''
+    end
+
+    # Tk's own Console window (macOS, no terminal). Tests set Tk.console_present = true to give the
+    # program one: `console hide` withdraws it, `console eval {wm state .}` reports its state. With
+    # none, the `console` command does not exist, like a real Tk that made no console.
+    attr_accessor :console_present
+    attr_reader :console_state
+
+    def console_call(args)
+      raise 'invalid command name "console"' unless console_present
+
+      case args[1]
+      when 'hide' then @console_state = 'withdrawn'
+      when 'show' then @console_state = 'normal'
+      when 'eval' then return(console_state || 'normal')
+      end
       ''
     end
 

@@ -21,7 +21,7 @@ module RubyTalk
         implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
         interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
         versions_window hierarchy_browser debugger class_comment test_runner find_and_replace
-        auto_indent_and_brackets remembered_window_layout file_out_and_in
+        auto_indent_and_brackets remembered_window_layout file_out_and_in tk_console_hidden
       ].freeze
 
       def initialize(main)
@@ -511,6 +511,17 @@ module RubyTalk
         assert(changes.find_method('RtSelfEx', :instance, 'hello'), 'the method was not recorded as a change')
       ensure
         Object.send(:remove_const, :RtSelfEx) if Object.const_defined?(:RtSelfEx)
+      end
+
+      # Tk's own "Console" shell window must not be showing. Without a console the `console` command does
+      # not exist, which is also fine. (Asks the console's own interpreter for its window state.)
+      def check_tk_console_hidden
+        state = begin
+          Tk.tk_call('console', 'eval', 'wm state .').to_s
+        rescue StandardError
+          'none'
+        end
+        assert(%w[withdrawn none].include?(state), "Tk's Console window is showing (state: #{state})")
       end
 
       def cleanup

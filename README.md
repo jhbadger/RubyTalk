@@ -349,6 +349,12 @@ why the files under `gui/` do not use `# frozen_string_literal: true`. It also r
 17. System > Change Directory...: pick a folder, confirm; RubyTalk restarts there (check the window title).
     Quit and start the app again from Finder: it opens in that folder.
 
+## The Tk "Console" window
+
+On macOS, Tk opens its own window titled "Console" (a bare Tcl shell with a `%` prompt) when a program is
+started without a terminal, such as RubyTalk.app from Finder. It is not part of RubyTalk, which has the
+Transcript, and RubyTalk hides it at startup. `--selftest` checks that it is hidden.
+
 ## Known limits
 
 * The debugger cannot resume or step, and shows locals only for the frame that raised (see Debugger).

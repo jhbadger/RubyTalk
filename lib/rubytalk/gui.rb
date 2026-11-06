@@ -101,11 +101,24 @@ module RubyTalk
         @main_window&.busy = flag
       end
 
+      # Tk on macOS opens its own "Console" window (a bare Tcl shell) when a program is started
+      # without a terminal, e.g. from Finder. RubyTalk has its own Transcript, so hide it. The
+      # `console` command only exists when Tk made a console: if it is missing there is nothing to
+      # hide. Returns true if a console was hidden.
+      def hide_tk_console
+        Tk.tk_call('console', 'hide')
+        true
+      rescue StandardError
+        false
+      end
+
       # Opens the Transcript, a System Browser and a Workspace, then runs Tk.
       # With selftest: true, runs the built-in checks against real widgets and
       # exits instead (see SelfTest).
       def start(selftest: false)
+        hide_tk_console
         main = MainWindow.new
+        hide_tk_console # again: it can appear once the first window does
         set_window_icon
         install_mac_quit
         Evaluator.driver = EventPump

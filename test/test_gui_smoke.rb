@@ -42,6 +42,25 @@ class GuiSmokeTest < Minitest::Test
     object.instance_variable_get(name)
   end
 
+  def test_tk_console_is_hidden_at_start_when_there_is_one
+    Tk.console_present = true
+    GUI.start
+    assert_equal 'withdrawn', Tk.console_state, "Tk's Console window must not be left showing"
+    assert_equal [GUI::MainWindow, GUI::Browser, GUI::Workspace], GUI.windows.last(3).map(&:class)
+  ensure
+    Tk.console_present = false
+  end
+
+  def test_no_console_is_fine
+    Tk.console_present = false
+    refute GUI.hide_tk_console, 'nothing to hide, and no error'
+    GUI.start # must not raise
+    Tk.console_present = true
+    assert GUI.hide_tk_console
+  ensure
+    Tk.console_present = false
+  end
+
   def test_start_opens_transcript_browser_and_workspace
     GUI.start
     assert_equal [GUI::MainWindow, GUI::Browser, GUI::Workspace], GUI.windows.last(3).map(&:class)
