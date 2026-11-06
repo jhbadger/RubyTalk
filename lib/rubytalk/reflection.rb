@@ -22,7 +22,7 @@ module RubyTalk
                                  Cursor Dependents]],
       ['Interface-Framework', %w[Model View Controller InputSensor ControlManager StandardSystemView
                                  StandardSystemController FormView StringView ButtonView ButtonController ListView
-                                 ListController MouseMenuController PopUpMenu Scrollable]],
+                                 ListController MouseMenuController PopUpMenu Scrollable TextView TextController Clipboard]],
       ['Concurrency', %w[Thread Mutex Queue SizedQueue ConditionVariable Fiber Ractor Monitor Timeout]]
     ].freeze
 

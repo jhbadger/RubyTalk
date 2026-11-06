@@ -354,7 +354,12 @@ why the files under `gui/` do not use `# frozen_string_literal: true`. It also r
     before releasing. `GraphicsExamples::Sketch.open`: drag with the left button to draw, press `r` then draw
     (red), `5` for a thicker pen, `c` to clear. Try the right and middle buttons (erase, clear). Close the
     windows with their close buttons. `Form.new(100, 100).tap { |f| Pen.new(f).spiral(40) }.show` shows a Form.
-18. System > Change Directory...: pick a folder, confirm; RubyTalk restarts there (check the window title).
+18. **Widgets:** `GraphicsExamples::Notes.open`: click New note, type in the editor (the list title follows your first
+    line), drag to select, double click a word, Cmd-C then Cmd-V (paste the same text into another app too),
+    Cmd-Z to undo. Press the **yellow** button on the list for its menu (on a Mac that is the middle button; try
+    control-click or two-finger click if your mouse has none: if no button opens it, tell me which numbers your
+    mouse gives). Use the wheel and scroll bar on a long note, and Up/Down on the list after clicking it.
+19. System > Change Directory...: pick a folder, confirm; RubyTalk restarts there (check the window title).
     Quit and start the app again from Finder: it opens in that folder.
 
 ## Graphics: Point, Rectangle, Form, BitBlt, Pen, Paths
@@ -398,6 +403,7 @@ from a Workspace:
 ```ruby
 GraphicsExamples::Counter.open     # a model, a StringView and three buttons
 GraphicsExamples::Sketch.open      # draw with the mouse: red draws, yellow erases, blue clears; keys 1-9 r g b k y o c
+GraphicsExamples::Notes.open       # a scrolling list, a text editor and a yellow-button menu on one model
 form.show                          # any Form, in a window (redraws when you call form.changed)
 ```
 
@@ -431,6 +437,18 @@ form.show                          # any Form, in a window (redraws when you cal
   drag to an item, release to choose; release off the menu cancels), and if you release without moving it stays
   open as a click menu: click an item to choose it, click elsewhere or press Escape to dismiss, Up/Down/Return
   work too. The menu is placed inside its window, so menus have to fit in the window.
+* **Text editing** (`TextView`, with `TextController`): a monospaced editor on the built-in font.
+  `TextView.new(nil, Rectangle.from(0, 0, 300, 120), text: "Hello") { |text| ... }` calls the block after every
+  edit; `multiline: false` makes a one-line field (Return calls `on_accept`); `editable: false` allows selecting and
+  copying only; give it a model with `aspect: :body` and it reads `model.body`, writes `model.body=` as you type
+  and reloads when the model says `changed(:body)`. Click to place the caret (this gives it the keyboard); drag to
+  select; **double click selects a word, triple click a line, shift-click extends**; shift with the arrow, Home, End,
+  Page Up and Page Down keys selects; control (Ctrl) with Left or Right moves by words; Tab types two spaces
+  (`tab_width`); **Cmd-A, C, X, V, Z** (Ctrl elsewhere) select all, copy, cut, paste and undo, using the **system
+  clipboard** (`Clipboard.text`); the yellow button shows an editing menu unless you set another. It scrolls
+  (wheel, scroll bar, or just typing past the edge; long lines scroll sideways). The editing is also plain methods
+  (`insert`, `move(:word_right, extend: true)`, `select_word_at`, `undo`, `copy` ...), so a program can drive it.
+  Without word wrap; text that is not ASCII shows as `?` in the 5x7 font.
 * **Keyboard, modifiers and clicks**: a controller that returns true from `wants_keyboard_focus?` gets the keys
   after you click its view; otherwise keys go to the controller under the pointer. `sensor.shift_pressed?` and
   `sensor.control_pressed?` give the modifier keys at the last mouse or key event, and `sensor.click_count` is 1, 2
@@ -463,8 +481,9 @@ window.add_subview(ButtonView.new('Bump', Rectangle.from(5, 30, 80, 24)) { meter
 window.open
 ```
 
-Limits: windows have a fixed size; there is no text-editing widget yet; menus cannot be taller than their
-window; text is the built-in 5x7 bitmap font; and the whole window is redrawn on any change (fine at these sizes).
+Limits: windows have a fixed size; menus cannot be taller than their window; text is the built-in 5x7 bitmap font
+(ASCII only); the editor has no word wrap, no redo and no input-method (accented or non-Latin) typing; and the whole
+window is redrawn on any change (fine at these sizes).
 
 ## The Tk "Console" window
 

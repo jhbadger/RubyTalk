@@ -5,6 +5,7 @@
 #
 #   GraphicsExamples::Counter.open
 #   GraphicsExamples::Sketch.open
+#   GraphicsExamples::Notes.open
 module GraphicsExamples
   # A model with one number, a StringView that shows it, and three buttons that change it.
   class Counter < Model
@@ -137,6 +138,92 @@ module GraphicsExamples
       else
         model.line(from, to)
       end
+    end
+  end
+
+  # A notebook: a scrolling list of notes (titled by their first line), a text editor for the selected note,
+  # a New note button, and a yellow-button menu on the list. It shows a model feeding three kinds of view:
+  # the list and the editor both depend on the model and update each other through it.
+  class Notes < Model
+    attr_reader :notes, :selected
+
+    def initialize
+      super
+      @notes = [+"Welcome to Notes\nClick a note on the left, then type here.\nThe yellow button on the list has a menu."]
+      @selected = 0
+    end
+
+    def titles
+      @notes.map do |note|
+        title = note.lines.first.to_s.strip
+        title.empty? ? '(empty)' : title
+      end
+    end
+
+    # The text of the selected note: what the editor reads and writes.
+    def selected_text
+      @notes[@selected].to_s
+    end
+
+    def selected_text=(text)
+      @notes[@selected] = text
+      changed(:titles)
+    end
+
+    def select(index)
+      return unless index.between?(0, @notes.size - 1)
+
+      @selected = index
+      changed(:selected_text)
+    end
+
+    def add_note
+      @notes << +''
+      @selected = @notes.size - 1
+      changed(:titles)
+      changed(:selected_text)
+    end
+
+    def duplicate_selected
+      @notes.insert(@selected + 1, selected_text.dup)
+      @selected += 1
+      changed(:titles)
+      changed(:selected_text)
+    end
+
+    # There is always at least one note.
+    def delete_selected
+      return if @notes.size <= 1
+
+      @notes.delete_at(@selected)
+      @selected = [@selected, @notes.size - 1].min
+      changed(:titles)
+      changed(:selected_text)
+    end
+
+    def self.open
+      model = new
+      window = StandardSystemView.new('Notes', model, Point.new(480, 280))
+      list = window.add_subview(NotesListView.new(model.titles, Rectangle.from(0, 0, 150, 250)))
+      list.model = model
+      list.selection = model.selected
+      list.on_select = ->(index, _title) { model.select(index) }
+      list.controller.yellow_button_menu = PopUpMenu.new([['New note', -> { model.add_note }],
+                                                          ['Duplicate', -> { model.duplicate_selected }], '-',
+                                                          ['Delete', -> { model.delete_selected }]])
+      window.add_subview(ButtonView.new('New note', Rectangle.from(0, 252, 150, 26)) { model.add_note })
+      window.add_subview(TextView.new(model, Rectangle.from(150, 0, 330, 280), aspect: :selected_text))
+      window.open
+    end
+  end
+
+  # The list of note titles, redrawn from the model whenever it changes.
+  class NotesListView < ListView
+    def update(_aspect = nil, _with = nil)
+      @items = model.titles
+      @selection = model.selected
+      ensure_visible(@selection)
+      invalidate
     end
   end
 end

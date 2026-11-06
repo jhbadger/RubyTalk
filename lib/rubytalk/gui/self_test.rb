@@ -21,7 +21,7 @@ module RubyTalk
         implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
         interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
         versions_window hierarchy_browser debugger class_comment test_runner find_and_replace
-        auto_indent_and_brackets remembered_window_layout file_out_and_in tk_console_hidden graphics_window scrolling_list popup_menu
+        auto_indent_and_brackets remembered_window_layout file_out_and_in tk_console_hidden graphics_window scrolling_list popup_menu text_editing
       ].freeze
 
       def initialize(main)
@@ -616,6 +616,59 @@ module RubyTalk
         generate(win.canvas, '<KeyPress>', '-keysym', 'Return')
         assert_equal %w[Beta Beta], chosen
       ensure
+        view&.close if ControlManager.instance.windows.include?(view)
+      end
+
+      # A text field on real Tk: click to focus, type with real key events, shift-select, copy and paste through the
+      # system clipboard with the Command (Control) key, then a double click selecting a word. Restores whatever
+      # was on your clipboard afterwards.
+      def check_text_editing
+        saved = begin
+          Tk.tk_call('clipboard', 'get').to_s
+        rescue StandardError
+          nil
+        end
+        view = StandardSystemView.new('Text self-test', nil, Point.new(240, 60))
+        field = view.add_subview(TextView.new(nil, Rectangle.from(0, 0, 240, 60)))
+        view.open
+        win = GUI.windows.last
+        win.canvas.focus
+        update
+        key = ->(keysym, *options) { generate(win.canvas, '<KeyPress>', '-keysym', keysym, *options) }
+
+        generate(win.canvas, '<ButtonPress-1>', '-x', 20, '-y', 20)
+        generate(win.canvas, '<ButtonRelease-1>', '-x', 20, '-y', 20)
+        assert(field.focused, 'clicking the field did not give it the keyboard')
+        %w[h e l l o].each { |letter| key.call(letter) }
+        key.call('space')
+        %w[w o r l d].each { |letter| key.call(letter) }
+        assert_equal 'hello world', field.text.sub(/\s+/, ' '), "typing: #{field.text.inspect}"
+        key.call('Return')
+        key.call('Left', '-state', 1)
+        assert(field.selection_range, 'shift-left did not select (the modifier state in the key binding)')
+        key.call('BackSpace')
+        assert_equal 'hello world', field.text.sub(/\s+/, ' ').strip
+
+        generate(win.canvas, "<#{MODIFIER}-Key>", '-keysym', 'a')
+        generate(win.canvas, "<#{MODIFIER}-Key>", '-keysym', 'c')
+        copied = Tk.tk_call('clipboard', 'get').to_s
+        assert(copied.start_with?('hello'), "copy did not reach the system clipboard (got #{copied.inspect})")
+        key.call('Delete')
+        assert_equal '', field.text
+        generate(win.canvas, "<#{MODIFIER}-Key>", '-keysym', 'v')
+        assert(field.text.start_with?('hello'), 'paste did not bring the text back')
+
+        field.place_caret(0)
+        generate(win.canvas, '<ButtonPress-1>', '-x', 20, '-y', 8)
+        generate(win.canvas, '<ButtonRelease-1>', '-x', 20, '-y', 8)
+        generate(win.canvas, '<ButtonPress-1>', '-x', 20, '-y', 8)
+        generate(win.canvas, '<ButtonRelease-1>', '-x', 20, '-y', 8)
+        assert_equal 'hello', field.selected_text, 'a double click should select the word'
+      ensure
+        if saved
+          Tk.tk_call('clipboard', 'clear')
+          Tk.tk_call('clipboard', 'append', '--', saved.dup)
+        end
         view&.close if ControlManager.instance.windows.include?(view)
       end
 

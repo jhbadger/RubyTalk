@@ -311,6 +311,52 @@ class GuiSmokeTest < Minitest::Test
     assert_equal resting, Tk.photos[win.image], 'the menu is gone from the picture'
   end
 
+  def test_the_clipboard_is_the_tk_clipboard
+    assert_equal GUI::TkClipboard, Clipboard.backend
+    Tk.clipboard_text = nil
+    assert_equal '', Clipboard.text, 'an empty Tk clipboard reads as an empty string, not an error'
+    Clipboard.text = '-starts with a dash'
+    assert_equal '-starts with a dash', Tk.clipboard_text
+    assert_equal '-starts with a dash', Clipboard.text
+    Clipboard.text = 'second'
+    assert_equal 'second', Tk.clipboard_text, 'setting clears first'
+  ensure
+    Tk.clipboard_text = nil
+  end
+
+  def test_typing_and_command_keys_edit_a_text_view_through_tk_events
+    manager = ControlManager.new
+    manager.opener = ->(view) { GUI::GraphicsWindow.new(view, manager) }
+    view = StandardSystemView.new('Editor test', nil, Point.new(200, 60))
+    field = view.add_subview(TextView.new(nil, Rectangle.from(0, 0, 200, 60)))
+    view.open(manager)
+    win = GUI.windows.last
+    ControlManager.stub(:instance, manager) do
+      resting = Tk.photos[win.image]
+      press(win, 'ButtonPress-1', 20, 20)
+      press(win, 'ButtonRelease-1', 20, 20)
+      %w[h i].each { |letter| tk('event', 'generate', win.canvas.path, '<KeyPress>', '-keysym', letter) }
+      tk('event', 'generate', win.canvas.path, '<KeyPress>', '-keysym', 'Return')
+      tk('event', 'generate', win.canvas.path, '<KeyPress>', '-keysym', 'x')
+      assert_equal "hi\nx", field.text
+      refute_equal resting, Tk.photos[win.image], 'the typing reached the picture Tk shows'
+      tk('event', 'generate', win.canvas.path, '<KeyPress>', '-keysym', 'BackSpace')
+      tk('event', 'generate', win.canvas.path, '<KeyPress>', '-keysym', 'Left', '-state', '1') # shift-left selects
+      assert_equal "hi\n", field.text
+      assert_equal [2, 3], field.selection_range
+
+      tk('event', 'generate', win.canvas.path, "<#{GUI::MODIFIER}-Key>", '-keysym', 'a')
+      tk('event', 'generate', win.canvas.path, "<#{GUI::MODIFIER}-Key>", '-keysym', 'c')
+      assert_equal "hi\n", Tk.clipboard_text, 'copied to the system clipboard'
+      tk('event', 'generate', win.canvas.path, '<KeyPress>', '-keysym', 'Delete')
+      assert_equal '', field.text
+      tk('event', 'generate', win.canvas.path, "<#{GUI::MODIFIER}-Key>", '-keysym', 'v')
+      assert_equal "hi\n", field.text, 'pasted back from it'
+    end
+  ensure
+    Tk.clipboard_text = nil
+  end
+
   def test_closing_the_tk_window_closes_the_view
     manager, model, view, win = graphics_fixture
     assert_equal [view], manager.windows

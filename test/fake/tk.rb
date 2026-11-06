@@ -61,6 +61,7 @@ module Tk
       return wm_call(args) if first == 'wm' && args[1] == 'geometry'
       return generate_event(args) if first == 'event' && args[1] == 'generate'
       return image_call(args) if first == 'image'
+      return clipboard_call(args) if first == 'clipboard'
       return photo_call(first, args) if first.match?(/\Aimage\d+\z/)
       return console_call(args) if first == 'console'
       return chooser_call(args) if first == 'tk_chooseDirectory'
@@ -165,6 +166,18 @@ module Tk
     end
 
     # `image create photo -data ...`, `image type`, `image width` (the window icon).
+    # The system clipboard: `clipboard clear`, `clipboard append -- text`, `clipboard get` (an error when empty).
+    attr_accessor :clipboard_text
+
+    def clipboard_call(args)
+      case args[1]
+      when 'clear' then self.clipboard_text = nil
+      when 'append' then self.clipboard_text = "#{clipboard_text}#{args.last}"
+      when 'get' then return clipboard_text || raise('CLIPBOARD selection doesn\'t exist or form "STRING" not defined')
+      end
+      ''
+    end
+
     # Photo images. Each keeps the base64 PNG last given to it with -data, so tests can read its size.
     def photos
       @photos ||= {}
@@ -196,6 +209,14 @@ module Tk
       data.unpack1('m').byteslice(16, 8).unpack('NN')
     end
 
+    # The character Tk puts in %A for a synthesized key: the key itself if it is one character, a space for
+    # 'space', nothing for named keys such as Left and Return (their own control characters are not modelled).
+    def key_character(keysym)
+      return ' ' if keysym == 'space'
+
+      keysym.to_s.size == 1 ? keysym : ''
+    end
+
     # `event generate path <Pattern> -x 10 -y 20 -keysym a`: run the matching binding with those fields.
     def generate_event(args)
       widget = FakeWidget.find(args[2]) or raise "fake Tk: no widget #{args[2]}"
@@ -203,7 +224,7 @@ module Tk
       options = args[4..].each_slice(2).to_h
       fields = { '%x' => options['-x'], '%y' => options['-y'], '%K' => options['-keysym'],
                  '%D' => options['-delta'], '%s' => options['-state'],
-                 '%A' => options['-keysym'].to_s.size == 1 ? options['-keysym'] : '' }
+                 '%A' => key_character(options['-keysym']) }
       widget.fire(pattern, fields) if widget.bindings.key?(pattern)
       ''
     end

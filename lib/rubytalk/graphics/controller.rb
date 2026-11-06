@@ -203,3 +203,111 @@ class ListController < MouseMenuController
     end
   end
 end
+
+# The controller of a TextView: the mouse places the caret (double click selects a word, triple click a line,
+# shift-click extends, dragging selects), the keys edit and move (shift extends the selection, control moves
+# by words), Cmd-A/C/X/V/Z (Ctrl elsewhere) select all, copy, cut, paste and undo, and the yellow button shows
+# an editing menu unless you give it another.
+class TextController < MouseMenuController
+  def wants_keyboard_focus?
+    true
+  end
+
+  def focus_gained
+    view.focused = true
+  end
+
+  def focus_lost
+    view.focused = false
+  end
+
+  def mouse_down(point, button)
+    return unless button == :red
+
+    if view.in_scrollbar?(point)
+      @scrolling = true
+      view.scroll_to_point(point)
+      return
+    end
+    index = view.index_at(point)
+    case sensor.click_count
+    when 2 then view.select_word_at(index)
+    when 3 then view.select_line_at(index)
+    else sensor.shift_pressed? ? view.extend_selection(index) : view.place_caret(index)
+    end
+    @dragging = sensor.click_count == 1
+  end
+
+  def mouse_move(point)
+    if @scrolling
+      view.scroll_to_point(point)
+    elsif @dragging
+      view.extend_selection(view.index_at(point))
+    end
+  end
+
+  def mouse_up(_point, _button)
+    @dragging = false
+    @scrolling = false
+  end
+
+  def mouse_wheel(_point, lines)
+    view.scroll_lines(lines)
+  end
+
+  MOVES = { 'Left' => :left, 'Right' => :right, 'Up' => :up, 'Down' => :down, 'Home' => :home, 'End' => :end,
+            'Prior' => :page_up, 'Next' => :page_down }.freeze
+
+  def key_pressed(char, keysym = nil)
+    shift = sensor.shift_pressed?
+    if MOVES.key?(keysym)
+      direction = MOVES[keysym]
+      direction = :word_left if direction == :left && sensor.control_pressed?
+      direction = :word_right if direction == :right && sensor.control_pressed?
+      view.move(direction, extend: shift)
+    else
+      edit_key(char, keysym)
+    end
+  end
+
+  def command_key(keysym)
+    case keysym.to_s.downcase
+    when 'a' then view.select_all
+    when 'c' then view.copy
+    when 'x' then view.cut
+    when 'v' then view.paste
+    when 'z' then view.undo
+    else return false
+    end
+    true
+  end
+
+  def menu_for(button)
+    menu = super
+    return menu if menu || button != :yellow
+
+    @menus[:yellow] ||= default_menu
+  end
+
+  private
+
+  def edit_key(char, keysym)
+    case keysym
+    when 'BackSpace' then view.delete_backward
+    when 'Delete' then view.delete_forward
+    when 'Return', 'KP_Enter' then view.multiline ? view.insert("\n") : view.accept
+    when 'Tab' then view.insert(' ' * view.tab_width) if view.multiline
+    when 'space' then view.insert(' ') # whether or not Tk also supplied the character
+    else view.insert(char) if printable?(char)
+    end
+  end
+
+  def printable?(char)
+    char.is_a?(String) && char.size == 1 && char.ord >= 32 && char.ord != 127
+  end
+
+  def default_menu
+    PopUpMenu.new([['Undo', -> { view.undo }], '-', ['Cut', -> { view.cut }], ['Copy', -> { view.copy }],
+                   ['Paste', -> { view.paste }], '-', ['Select all', -> { view.select_all }]])
+  end
+end

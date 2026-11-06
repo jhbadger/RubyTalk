@@ -559,9 +559,12 @@ require_relative 'gui/browser'
 require_relative 'gui/inspector'
 require_relative 'gui/method_list'
 require_relative 'gui/versions_window'
+require_relative 'gui/tk_clipboard'
 require_relative 'gui/graphics_window'
 require_relative 'gui/test_results_window'
 require_relative 'gui/self_test'
 
-# Windows opened by the graphics framework (StandardSystemView#open) appear as Tk windows.
+# Windows opened by the graphics framework (StandardSystemView#open) appear as Tk windows, and the text
+# views' cut, copy and paste use the system clipboard.
 ControlManager.instance.opener = ->(view) { RubyTalk::GUI::GraphicsWindow.new(view, ControlManager.instance) }
+Clipboard.backend = RubyTalk::GUI::TkClipboard
