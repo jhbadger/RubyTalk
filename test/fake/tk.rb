@@ -61,6 +61,7 @@ module Tk
       return wm_call(args) if first == 'wm' && args[1] == 'geometry'
       return generate_event(args) if first == 'event' && args[1] == 'generate'
       return image_call(args) if first == 'image'
+      return photo_call(first, args) if first.match?(/\Aimage\d+\z/)
       return console_call(args) if first == 'console'
       return chooser_call(args) if first == 'tk_chooseDirectory'
       return dialog_call(args) if %w[tk_getSaveFile tk_getOpenFile].include?(first)
@@ -164,19 +165,45 @@ module Tk
     end
 
     # `image create photo -data ...`, `image type`, `image width` (the window icon).
+    # Photo images. Each keeps the base64 PNG last given to it with -data, so tests can read its size.
+    def photos
+      @photos ||= {}
+    end
+
     def image_call(args)
       case args[1]
-      when 'create' then (@images ||= []).push(args.last(3)).then { "image#{@images.size}" }
+      when 'create'
+        name = "image#{photos.size + 1}"
+        photos[name] = args.include?('-data') ? args[args.index('-data') + 1] : nil
+        name
       when 'type' then 'photo'
-      when 'width' then '128'
+      when 'width' then photo_size(args[2]).first.to_s
+      when 'height' then photo_size(args[2]).last.to_s
       else ''
       end
     end
 
+    # `imageN configure -data base64`: replace the picture.
+    def photo_call(name, args)
+      photos[name] = args[args.index('-data') + 1] if args[1] == 'configure' && args.include?('-data')
+      ''
+    end
+
+    def photo_size(name)
+      data = photos[name]
+      return [0, 0] unless data
+
+      data.unpack1('m').byteslice(16, 8).unpack('NN')
+    end
+
+    # `event generate path <Pattern> -x 10 -y 20 -keysym a`: run the matching binding with those fields.
     def generate_event(args)
       widget = FakeWidget.find(args[2]) or raise "fake Tk: no widget #{args[2]}"
       pattern = args[3].to_s.delete('<>')
-      widget.fire(pattern) if widget.bindings.key?(pattern)
+      options = args[4..].each_slice(2).to_h
+      fields = { '%x' => options['-x'], '%y' => options['-y'], '%K' => options['-keysym'],
+                 '%A' => options['-keysym'].to_s.size == 1 ? options['-keysym'] : '' }
+      widget.fire(pattern, fields) if widget.bindings.key?(pattern)
       ''
     end
 
@@ -248,15 +275,17 @@ class FakeWidget
     parent.children << self if parent.respond_to?(:children)
   end
 
-  def bind(event, *_rest, &block)
+  def bind(event, *spec, &block)
     @bindings[event] = block
+    (@bind_specs ||= {})[event] = spec.join(' ').split # the %-codes the handler wants, e.g. %x %y
     self
   end
 
-  # Simulate the user pressing a key / clicking: runs the binding like Tk would.
-  def fire(event)
+  # Simulate the user pressing a key / clicking: runs the binding like Tk would. +fields+ gives the
+  # value of each %-code the handler asked for (as Tk does, they arrive as strings).
+  def fire(event, fields = {})
     block = @bindings.fetch(event)
-    block.call
+    block.call(*((@bind_specs || {})[event] || []).map { |code| fields[code] })
     :continue
   rescue TkCallbackBreak
     :break
@@ -346,6 +375,7 @@ class TkRoot < FakeWidget
 end
 class TkToplevel < FakeWidget; end
 class TkFrame < FakeWidget; end
+class TkCanvas < FakeWidget; end
 class TkLabel < FakeWidget; end
 class TkButton < FakeWidget; end
 class TkRadiobutton < FakeWidget; end

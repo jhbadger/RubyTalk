@@ -140,7 +140,12 @@ module RubyTalk
       # Carry out work queued by background threads (e.g. a Thread started from a do
       # it that prints to the Transcript later) even when nothing is running.
       def start_main_queue_timer
-        @main_queue_timer = TkTimer.new(100, -1, proc { safely { drain_main_queue } })
+        @main_queue_timer = TkTimer.new(100, -1, proc do
+          safely do
+            drain_main_queue
+            ControlManager.instance.refresh_all # views changed from a do it or another thread
+          end
+        end)
         @main_queue_timer.start
       end
 
@@ -434,7 +439,7 @@ module RubyTalk
       end
 
       def window_title(window, title)
-        Tk.tk_call('wm', 'title', window.path, title)
+        Tk.tk_call('wm', 'title', window.path, title.to_s.dup) # a label may be a frozen string
       end
 
       # Pop a menu up at the mouse pointer.
@@ -554,5 +559,9 @@ require_relative 'gui/browser'
 require_relative 'gui/inspector'
 require_relative 'gui/method_list'
 require_relative 'gui/versions_window'
+require_relative 'gui/graphics_window'
 require_relative 'gui/test_results_window'
 require_relative 'gui/self_test'
+
+# Windows opened by the graphics framework (StandardSystemView#open) appear as Tk windows.
+ControlManager.instance.opener = ->(view) { RubyTalk::GUI::GraphicsWindow.new(view, ControlManager.instance) }

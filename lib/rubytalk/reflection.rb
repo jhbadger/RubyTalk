@@ -20,6 +20,9 @@ module RubyTalk
       ['Time-Process', %w[Time Date DateTime Process]],
       ['Graphics-Primitives', %w[Point Rectangle Color Form BitBlt Pen Path LinearFit Line Arc Circle Spline Font
                                  Cursor Dependents]],
+      ['Interface-Framework', %w[Model View Controller InputSensor ControlManager StandardSystemView
+                                 StandardSystemController FormView StringView ButtonView ButtonController ListView
+                                 ListController]],
       ['Concurrency', %w[Thread Mutex Queue SizedQueue ConditionVariable Fiber Ractor Monitor Timeout]]
     ].freeze
 

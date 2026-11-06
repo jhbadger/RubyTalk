@@ -21,7 +21,7 @@ module RubyTalk
         implementors_key_binding edit_menu_invokes_command changes_file_replays window_icon mac_quit_hook syntax_highlighting
         interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
         versions_window hierarchy_browser debugger class_comment test_runner find_and_replace
-        auto_indent_and_brackets remembered_window_layout file_out_and_in tk_console_hidden
+        auto_indent_and_brackets remembered_window_layout file_out_and_in tk_console_hidden graphics_window
       ].freeze
 
       def initialize(main)
@@ -79,8 +79,8 @@ module RubyTalk
         Tk.tk_call('update')
       end
 
-      def generate(widget, pattern)
-        Tk.tk_call('event', 'generate', widget.path, pattern)
+      def generate(widget, pattern, *options)
+        Tk.tk_call('event', 'generate', widget.path, pattern, *options.map { |option| option.to_s.dup })
         update
       end
 
@@ -522,6 +522,40 @@ module RubyTalk
           'none'
         end
         assert(%w[withdrawn none].include?(state), "Tk's Console window is showing (state: #{state})")
+      end
+
+      # The MVC framework on real Tk: open a window with a button, show it in a Tk canvas, and drive it with
+      # genuine mouse events (the %x %y arguments of the bindings), checking the picture reaches Tk.
+      def check_graphics_window
+        model = GraphicsExamples::Counter.new
+        view = StandardSystemView.new('Graphics self-test', model, Point.new(200, 80))
+        view.add_subview(ButtonView.new('+', Rectangle.from(10, 10, 60, 30)) { model.increment })
+        view.add_subview(StringView.new(model, Rectangle.from(90, 15, 100, 20)) { |counter| "n=#{counter.count}" })
+        view.open
+        win = GUI.windows.last
+        assert(win.is_a?(GraphicsWindow), 'no graphics window opened')
+        update
+        assert_equal '200', Tk.tk_call('image', 'width', win.image).to_s
+        assert_equal '80', Tk.tk_call('image', 'height', win.image).to_s
+
+        generate(win.canvas, '<Motion>', '-x', 20, '-y', 20)
+        generate(win.canvas, '<ButtonPress-1>', '-x', 20, '-y', 20)
+        assert(view.subviews.first.pressed, 'the press at 20,20 did not reach the button (mouse bindings)')
+        generate(win.canvas, '<ButtonRelease-1>', '-x', 20, '-y', 20)
+        assert_equal 1, model.count, 'releasing on the button did not run its action'
+        ControlManager.instance.refresh_all
+        assert(view.form[95, 20] && view.form.copy(Rectangle.from(90, 15, 100, 20)).to_ascii.join.include?('#'),
+               'the count was not drawn into the window')
+
+        generate(win.canvas, '<ButtonPress-1>', '-x', 20, '-y', 20)
+        generate(win.canvas, '<B1-Motion>', '-x', 150, '-y', 70)
+        assert(!view.subviews.first.pressed, 'dragging off did not un-press the button (drag bindings)')
+        generate(win.canvas, '<ButtonRelease-1>', '-x', 150, '-y', 70)
+        assert_equal 1, model.count, 'releasing off the button must not run it'
+        view.close
+        assert_equal '0', Tk.tk_call('winfo', 'exists', win.window.path).to_s, 'closing the view did not close its window'
+      ensure
+        view&.close if ControlManager.instance.windows.include?(view)
       end
 
       def cleanup

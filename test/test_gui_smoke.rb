@@ -158,6 +158,138 @@ class GuiSmokeTest < Minitest::Test
     Tk.rgb_answer = nil
   end
 
+  # --- graphics windows (MVC hosted in Tk) -------------------------------------------
+
+  def graphics_fixture
+    manager = ControlManager.new
+    manager.opener = ->(view) { GUI::GraphicsWindow.new(view, manager) }
+    model = GraphicsExamples::Counter.new
+    view = StandardSystemView.new('Counter test', model, Point.new(200, 80))
+    view.add_subview(ButtonView.new('+', Rectangle.from(10, 10, 60, 30)) { model.increment })
+    view.open(manager)
+    [manager, model, view, GUI.windows.last]
+  end
+
+  def press(win, event, x, y)
+    tk('event', 'generate', win.canvas.path, "<#{event}>", '-x', x.to_s, '-y', y.to_s)
+  end
+
+  def test_opening_a_view_makes_a_tk_window_with_its_picture
+    refute_nil ControlManager.instance.opener, 'the Tk layer installs the opener'
+    _manager, _model, view, win = graphics_fixture
+    assert_instance_of GUI::GraphicsWindow, win
+    assert_equal 'Counter test', Tk.last_title
+    assert_instance_of TkCanvas, win.canvas
+    assert_equal 200, win.canvas.options[:width]
+    assert_equal 80, win.canvas.options[:height]
+    assert_equal ['200', '80'], [tk('image', 'width', win.image), tk('image', 'height', win.image)].map(&:to_s),
+                 'the window picture has been given to Tk, at the size of the view'
+    assert_same view, win.view
+  end
+
+  def test_tk_mouse_events_reach_the_controllers_and_the_picture_updates
+    _manager, model, view, win = graphics_fixture
+    resting = Tk.photos[win.image]
+    press(win, 'ButtonPress-1', 20, 20)
+    refute_equal resting, Tk.photos[win.image], 'pressed: the button is drawn inverted and Tk was given the new picture'
+    press(win, 'ButtonRelease-1', 20, 20)
+    assert_equal 1, model.count, 'a click on the button, delivered as Tk events, ran its action'
+    assert_equal resting, Tk.photos[win.image], 'released: back to the resting picture'
+
+    press(win, 'Motion', 150, 60)
+    press(win, 'ButtonPress-1', 20, 20)
+    press(win, 'B1-Motion', 150, 60) # dragged off the button
+    press(win, 'ButtonRelease-1', 150, 60)
+    assert_equal 1, model.count, 'released outside: no action'
+    assert_equal view.form.to_png, Tk.photos[win.image].unpack1('m'), 'Tk got exactly the window Form, as a PNG'
+  end
+
+  def test_tk_mouse_buttons_are_named_by_colour
+    names = GUI::GraphicsWindow::BUTTON_NAMES
+    assert_equal :red, names[1]
+    assert_equal %i[blue yellow], [names[2], names[3]].sort
+    assert_equal [1, 2, 3], names.keys
+    pressed = []
+    manager = ControlManager.new
+    manager.opener = ->(view) { GUI::GraphicsWindow.new(view, manager) }
+    view = StandardSystemView.new('Buttons', nil, Point.new(50, 50))
+    view.controller = Class.new(Controller) { define_method(:mouse_down) { |_p, b| pressed << b } }.new(view)
+    view.open(manager)
+    win = GUI.windows.last
+    [1, 2, 3].each { |n| press(win, "ButtonPress-#{n}", 5, 5) }
+    assert_equal %i[red blue yellow].sort, pressed.sort
+    assert_equal :red, pressed.first
+  end
+
+  def test_tk_key_and_leave_events_and_the_cursor
+    manager = ControlManager.new
+    manager.opener = ->(view) { GUI::GraphicsWindow.new(view, manager) }
+    log = []
+    view = StandardSystemView.new('Keys', nil, Point.new(60, 60))
+    box = view.add_subview(View.new(nil, Rectangle.from(0, 0, 60, 60)))
+    box.cursor = Cursor.crosshair
+    box.controller = Class.new(Controller) do
+      define_method(:key_pressed) { |char, keysym| log << [char, keysym] }
+      define_method(:mouse_leave) { log << :leave }
+    end.new(box)
+    view.open(manager)
+    win = GUI.windows.last
+    press(win, 'Motion', 10, 10)
+    tk('event', 'generate', win.canvas.path, '<KeyPress>', '-keysym', 'a')
+    tk('event', 'generate', win.canvas.path, '<KeyPress>', '-keysym', 'Left')
+    assert_equal [['a', 'a'], ['', 'Left']], log, 'printable keys give their character, others only the keysym'
+    assert_equal 'crosshair', manager.cursor_name(view), 'the cursor of the view under the pointer is applied'
+    tk('event', 'generate', win.canvas.path, '<Leave>')
+    assert_equal :leave, log.last
+  end
+
+  def test_closing_the_tk_window_closes_the_view
+    manager, model, view, win = graphics_fixture
+    assert_equal [view], manager.windows
+    win.window.protocols['WM_DELETE_WINDOW'].call
+    assert_empty manager.windows
+    assert_empty model.dependents
+    assert win.window.destroyed?
+    view.close(manager) # programmatic close of an already closed window: harmless
+  end
+
+  def test_closing_a_view_from_code_destroys_its_window
+    manager, _model, view, win = graphics_fixture
+    view.close(manager)
+    assert win.window.destroyed?
+  end
+
+  def test_the_refresh_timer_redraws_views_changed_from_elsewhere
+    manager = ControlManager.instance
+    model = GraphicsExamples::Counter.new
+    view = StandardSystemView.new('Timer test', model, Point.new(120, 40))
+    view.add_subview(StringView.new(model, Rectangle.from(0, 0, 120, 20)) { |m| "n=#{m.count}" })
+    view.open(manager)
+    win = GUI.windows.last
+    GUI.start_main_queue_timer
+    first = Tk.photos[win.image]
+    Thread.new { model.increment }.join # changed off the main thread: only flags the view
+    assert_equal first, Tk.photos[win.image], 'nothing is drawn from the other thread'
+    TkTimer.all.last.fire
+    refute_equal first, Tk.photos[win.image], 'the timer, on the main thread, redraws it'
+  ensure
+    view&.close(manager)
+  end
+
+  def test_opening_a_view_from_a_do_it_goes_through_the_main_thread
+    manager = ControlManager.instance
+    with_pump do
+      code = "v = StandardSystemView.new('From a do it', nil, Point.new(50, 40)); v.open; $rt_opened = v"
+      GUI::Workspace.new(text: code).editor.do_it
+      assert_instance_of GUI::GraphicsWindow, GUI.windows.last
+      assert_equal 'From a do it', GUI.windows.last.view.label
+      assert_equal ['50', '40'], [tk('image', 'width', GUI.windows.last.image), tk('image', 'height', GUI.windows.last.image)].map(&:to_s)
+    end
+  ensure
+    $rt_opened&.close(manager)
+    $rt_opened = nil
+  end
+
   # --- file out and file in ---------------------------------------------------------
 
   def filed_fixture

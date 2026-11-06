@@ -14,3 +14,11 @@ require_relative 'graphics/font'
 require_relative 'graphics/pen'
 require_relative 'graphics/paths'
 require_relative 'graphics/cursor'
+
+# The Model-View-Controller framework.
+require_relative 'graphics/model'
+require_relative 'graphics/sensor'
+require_relative 'graphics/view'
+require_relative 'graphics/controller'
+require_relative 'graphics/control_manager'
+require_relative 'graphics/examples'

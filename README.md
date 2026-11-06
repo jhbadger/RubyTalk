@@ -286,13 +286,15 @@ lib/rubytalk/bracket_matcher.rb  matching brackets via the lexer (no GUI)
 lib/rubytalk/highlighter.rb  syntax highlighting: Ripper tokens to coloured spans (no GUI)
 lib/rubytalk/preferences.rb  remembers the last folder chosen
 lib/rubytalk/icon.rb         the icon, drawn in code; PNG and .icns writers
+lib/rubytalk/graphics/*.rb   Point, Rectangle, Form, BitBlt, Pen ... and the MVC framework (no GUI code)
 lib/rubytalk/app_bundle.rb   builds RubyTalk.app
 lib/rubytalk/cli.rb          command-line options
 lib/rubytalk/reflection.rb   categories, method lists, definition text (no GUI)
-lib/rubytalk/gui/*.rb        Tk windows (gui/self_test.rb is the --selftest; versions_window.rb the Versions window; debugger.rb the Debugger; test_results_window.rb the test results; find_bar.rb Find and Replace)
+lib/rubytalk/gui/*.rb        Tk windows (gui/graphics_window.rb hosts MVC windows; gui/self_test.rb is the --selftest; versions_window.rb the Versions window; debugger.rb the Debugger; test_results_window.rb the test results; find_bar.rb Find and Replace)
 test/test_core.rb            headless tests of everything above
 test/test_gui_smoke.rb       drives the windows against a recording stand-in for tk
 test/test_highlighter.rb      syntax highlighting (token classes, byte-to-character columns, bad input)
+test/test_graphics.rb        graphics classes and the MVC framework, headless
 test/test_icon.rb            icon pixels, .icns structure, app bundle (runs its launcher), CLI
 ```
 
@@ -301,6 +303,7 @@ ruby test/test_core.rb
 ruby test/test_gui_smoke.rb
 ruby test/test_icon.rb
 ruby test/test_highlighter.rb
+ruby test/test_graphics.rb
 ```
 
 The smoke test uses `test/fake/tk.rb`, so it checks RubyTalk's own GUI logic but cannot
@@ -346,7 +349,12 @@ why the files under `gui/` do not use `# frozen_string_literal: true`. It also r
 16. **File out / in:** make a class with a couple of methods, System > File Out Changes as Ruby..., and check the
     file needs no RubyTalk (in plain `irb`: `load 'thatfile.rb'`); then in RubyTalk remove the class and System >
     File In... the file: the class and its methods are back in the Browser as individual methods.
-17. System > Change Directory...: pick a folder, confirm; RubyTalk restarts there (check the window title).
+17. **Graphics:** in a Workspace run `GraphicsExamples::Counter.open`: a small window appears; clicking + - and
+    Reset changes the count; a button looks pressed while the mouse is down and does nothing if you drag off it
+    before releasing. `GraphicsExamples::Sketch.open`: drag with the left button to draw, press `r` then draw
+    (red), `5` for a thicker pen, `c` to clear. Try the right and middle buttons (erase, clear). Close the
+    windows with their close buttons. `Form.new(100, 100).tap { |f| Pen.new(f).spiral(40) }.show` shows a Form.
+18. System > Change Directory...: pick a folder, confirm; RubyTalk restarts there (check the window title).
     Quit and start the app again from Finder: it opens in that folder.
 
 ## Graphics: Point, Rectangle, Form, BitBlt, Pen, Paths
@@ -381,6 +389,64 @@ Circle.new(Point.new(220, 100), 50).display_on(form, color: Color.red, width: 2)
 form.draw_string('Hello', Point.new(10, 10), scale: 2)
 form.to_png            # PNG bytes; File.binwrite('picture.png', form.to_png)
 ```
+
+## Model-View-Controller
+
+Smalltalk-80's interface framework, listed in the browser under **Interface-Framework**. Try the two examples
+from a Workspace:
+
+```ruby
+GraphicsExamples::Counter.open     # a model, a StringView and three buttons
+GraphicsExamples::Sketch.open      # draw with the mouse: red draws, yellow erases, blue clears; keys 1-9 r g b k y o c
+form.show                          # any Form, in a window (redraws when you call form.changed)
+```
+
+* **Model**: includes `Dependents`. Call `changed(:aspect)` after changing it and every dependent view gets
+  `update(:aspect, with)`.
+* **View**: owns a rectangle (`bounds`, in its superview's coordinates), holds `subviews`, and draws itself by
+  overriding `display_view(form)`. **Each view draws into its own Form with 0@0 at its top-left**, so it never
+  needs to know where it sits; the framework copies the result into its parent, clipped to the view. The default
+  `update` redraws. `StandardSystemView.new(label, model, Point.new(w, h))` is a window; `add_subview`,
+  `open`, `close`.
+* **Controller**: handles the mouse and keyboard for one view (`view.controller`, made from
+  `default_controller_class`). Smalltalk's controllers run a polling loop; RubyTalk is event driven, so the same
+  protocol is arranged the other way round: the **ControlManager** sends the controller of the view under the
+  pointer `mouse_down(point, button)`, `mouse_up`, `mouse_move`, `key_pressed(char, keysym)`, with points in the
+  view's own coordinates; `control_initialize` when the pointer enters the view, `control_terminate` when it
+  leaves, and `control_activity` after every event (the old loop body). The view that got a button press keeps
+  the mouse until the button is up, even if you drag outside it. `sensor` (the `InputSensor`) gives
+  `cursor_point` and `red_button_pressed?` etc. Buttons are named by colour as in Smalltalk: **red is the left
+  button, yellow the middle, blue the right** (RubyTalk maps Tk's numbering, which differs on a Mac).
+* **Widgets**: `StringView` (fixed or computed text), `ButtonView` (acts when released inside it), `ListView`
+  (click to select), `FormView` (shows a Form). They are ordinary views and controllers you can read and copy.
+* **Windows**: each StandardSystemView is a Tk window showing a picture of the view tree. The picture is
+  redrawn after every event that changed something, and every 100 ms for changes made elsewhere (for example from
+  a do it). An error in a controller or view is written to the Transcript, not raised into Tk.
+* **Testing without a screen**: `ControlManager.new` is a window manager of your own, and
+  `manager.mouse_down(window, x, y, :red)` and friends simulate a user, which is how the tests drive everything.
+
+```ruby
+class Meter < Model
+  attr_reader :level
+  def initialize = (super; @level = 0)
+  def bump = (@level = (@level + 10) % 110; changed(:level))
+end
+
+class MeterView < View
+  def display_view(form)
+    form.fill(Rectangle.from(0, 0, model.level, height), Color.green)
+  end
+end
+
+meter = Meter.new
+window = StandardSystemView.new('Meter', meter, Point.new(120, 60))
+window.add_subview(MeterView.new(meter, Rectangle.from(5, 5, 110, 20)))
+window.add_subview(ButtonView.new('Bump', Rectangle.from(5, 30, 80, 24)) { meter.bump })
+window.open
+```
+
+Limits: windows have a fixed size; `ListView` does not scroll; there is no text-editing widget or pop-up menu
+yet; text is the built-in 5x7 bitmap font; and the whole window is redrawn on any change (fine at these sizes).
 
 ## The Tk "Console" window
 
