@@ -18,6 +18,8 @@ module RubyTalk
       ['Collections', %w[Array Hash Range Set Struct Enumerable Enumerator]],
       ['Streams-Files', %w[IO File Dir FileTest StringIO Pathname Tempfile FileUtils]],
       ['Time-Process', %w[Time Date DateTime Process]],
+      ['Graphics-Primitives', %w[Point Rectangle Color Form BitBlt Pen Path LinearFit Line Arc Circle Spline Font
+                                 Cursor Dependents]],
       ['Concurrency', %w[Thread Mutex Queue SizedQueue ConditionVariable Fiber Ractor Monitor Timeout]]
     ].freeze
 

@@ -1578,6 +1578,16 @@ class CoreTest < Minitest::Test
     Object.send(:remove_const, :RtCat) if defined?(RtCat)
   end
 
+  def test_graphics_classes_are_listed_in_their_own_category
+    catalog = RubyTalk::Reflection.catalog(@changes)
+    assert_includes catalog.names, 'Graphics-Primitives'
+    %w[Point Rectangle Color Form BitBlt Pen Path Line Arc Circle Spline Font Cursor].each do |name|
+      assert_includes catalog.classes_in('Graphics-Primitives'), Object.const_get(name), name
+    end
+    assert_includes catalog.classes_in('Graphics-Primitives'), Dependents
+    assert_match(/Rectangle/, RubyTalk::Reflection.method_text(Point, :instance, :corner), 'their source is browsable')
+  end
+
   def test_methods_for_and_text
     names = RubyTalk::Reflection.methods_for(String, :instance, :public, false)
     assert_includes names, :upcase

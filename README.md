@@ -349,6 +349,39 @@ why the files under `gui/` do not use `# frozen_string_literal: true`. It also r
 17. System > Change Directory...: pick a folder, confirm; RubyTalk restarts there (check the window title).
     Quit and start the app again from Finder: it opens in that folder.
 
+## Graphics: Point, Rectangle, Form, BitBlt, Pen, Paths
+
+Smalltalk-80's graphics classes are part of RubyTalk. They are defined at the top level, as in Smalltalk, so a
+Workspace can use them directly, and the browser lists them under **Graphics-Primitives**.
+
+* `Point` (`Point.new(3, 4)`, or `3.at(4)`): immutable, with arithmetic by point or number (`p * 2`, `2 * p`),
+  `dist`, `dot`, `max`/`min`, `corner`, `extent`. `Rectangle`: origin and corner (the corner is just outside),
+  `contains?`, `intersect`, `merge`, `expand_by`, `inset_by`, `translate_by`.
+* `Color`: red, green, blue 0 to 255 (`Color.red`, `Color.new(10, 200, 30)`, `Color.from_hex('#ff8800')`).
+* `Form`: a bitmap of real pixels (`0xRRGGBB` integers). `form.fill(rect, color)`, `copy_from`, `copy`, `reverse`,
+  `border`, `draw_string`, `to_ascii`, `to_ppm`, `to_png`, `Form.from_ascii`, `Form.from_ppm`. Drawing outside a
+  Form is clipped. White to start with.
+* `BitBlt`: the one primitive everything else uses, with the Blue Book's 16 combination rules (`BitBlt::OVER`,
+  `UNDER`, `ERASE`, `REVERSE`, `INVERT` ...), a halftone pattern (a Form tiled over the area, or a colour) and a
+  clip rectangle. **Rules work on "ink", where black counts as 1**, as on the original 1-bit displays: `UNDER`
+  paints black over anything, `ERASE` removes it, `REVERSE` (xor) draws and a second draw undoes it. Colours
+  combine channel by channel.
+* `Pen`: a turtle. `Pen.new(form)` starts in the middle pointing up; `go`, `turn`, `north`, `up`/`down`, `goto`,
+  `polygon`, `spiral`, `color=`, `width=`, `rule=`. Direction is in degrees, 0 east, so `turn(90)` turns right.
+* `Path`, `Line`, `LinearFit`, `Arc`, `Circle`, `Spline`: shapes that `display_on(form, at:, color:, width:)`.
+* `Font` (a 5x7 bitmap font, `Font.default`, drawn with `form.draw_string`) and `Cursor` (named mouse cursors).
+* `Dependents`: `add_dependent`, `changed(:aspect)` and `update`, Smalltalk's dependency mechanism, used by
+  `Form` and by `Model` (see MVC).
+
+```ruby
+form = Form.new(300, 200)
+pen = Pen.new(form, color: Color.blue)
+pen.spiral(60, 91, 2)
+Circle.new(Point.new(220, 100), 50).display_on(form, color: Color.red, width: 2)
+form.draw_string('Hello', Point.new(10, 10), scale: 2)
+form.to_png            # PNG bytes; File.binwrite('picture.png', form.to_png)
+```
+
 ## The Tk "Console" window
 
 On macOS, Tk opens its own window titled "Console" (a bare Tcl shell with a `%` prompt) when a program is
