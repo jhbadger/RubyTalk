@@ -2,7 +2,7 @@
 
 module RubyTalk
   module GUI
-    # Versions of one method, newest first: the current definition, earlier ones kept in
+    # Versions of one method (or, with name nil, of a class definition or comment), newest first: the current definition, earlier ones kept in
     # changes.history, and the original library method if RubyTalk has overridden or
     # removed it. Select one to read it; tick the box to see what reverting to it would
     # change; "Revert" makes it the current definition (the one it replaces is kept, so a
@@ -16,7 +16,7 @@ module RubyTalk
       def initialize(klass, side, name, on_change: nil)
         @klass = klass
         @side = side
-        @name = name.to_s
+        @name = name&.to_s
         @on_change = on_change
         @changes = RubyTalk.changes
         @window = TkToplevel.new
@@ -31,6 +31,8 @@ module RubyTalk
       private
 
       def title
+        return "#{Reflection.name_of(@klass)} (class definition)" unless @name
+
         "#{Reflection.name_of(@klass)}#{@side == :class ? '.' : '#'}#{@name}"
       end
 
@@ -70,7 +72,7 @@ module RubyTalk
         if @versions.empty?
           @code.highlighting = true
           @code.set_contents("# No earlier versions of #{title} are known.\n" \
-                             "# Versions appear once you redefine or remove it with Accept.\n")
+                             "# Versions appear once you #{@name ? 'redefine or remove it' : 'change it'} with Accept.\n")
           status('Nothing to revert to.')
         else
           @list.select_index(0)

@@ -19,9 +19,16 @@ module RubyTalk
       # :light or :dark once highlighting is set up (the palette in use), else nil.
       attr_reader :palette_name
 
-      def initialize(parent, evaluator:, width: 80, height: 12, wrap: 'none', on_accept: nil, highlight: false)
+      # scope:    optional callable answering [class, side] for the class this pane is about (a browser's
+      #           selected class); "Explain it" uses it to resolve instance variables and selectors.
+      # on_spawn: optional callable taking the pane's whole text; Spawn calls it instead of opening a
+      #           Workspace (the Browser spawns an edited method as a method window).
+      def initialize(parent, evaluator:, width: 80, height: 12, wrap: 'none', on_accept: nil, highlight: false,
+                     scope: nil, on_spawn: nil)
         @evaluator = evaluator
         @on_accept = on_accept
+        @scope = scope
+        @on_spawn = on_spawn
         @highlight = false
         @highlight_ready = false
         @find_bar = nil
@@ -157,7 +164,42 @@ module RubyTalk
         GUI.show_method_list(:senders, selector) if selector
       end
 
+      # Explain the selection, or the word at the cursor: what it is, without running anything.
+      # The answer goes to the Transcript. Returns the text (nil if there was nothing to explain).
+      def explain_it
+        word = explain_target or return nil
+
+        klass, side = @scope&.call
+        text = Explainer.explain(word, source: contents, klass: klass, side: side || :instance)
+        GUI.show_explanation(word, text)
+        text
+      end
+
+      # Spawn: copy this pane into a window of its own. With a selection, the selection goes into a new
+      # Workspace; with none, the whole pane goes to +on_spawn+ (or a new Workspace).
+      def spawn
+        selection = selected_text.to_s
+        if selection.empty?
+          text = contents
+          @on_spawn ? @on_spawn.call(text) : GUI.spawn_workspace(text)
+        else
+          GUI.spawn_workspace(selection)
+        end
+      end
+
       private
+
+      # The selected text, else the token under the cursor, else nil.
+      def explain_target
+        selection = selected_text.to_s.strip
+        return selection unless selection.empty?
+
+        _row, column = @text.index('insert').to_s.split('.').map(&:to_i)
+        line = @text.get('insert linestart', 'insert lineend').to_s
+        token = Explainer.token_at(line, column.to_i)
+        GUI.show_explanation('', Explainer.explain('')) unless token # says there is nothing to explain
+        token
+      end
 
       def selector_text
         raw = selected_text.to_s.strip
@@ -298,7 +340,7 @@ module RubyTalk
       def command_keys
         @command_keys ||= {
           'd' => :do_it, 'p' => :print_it, 'i' => :inspect_it, 'b' => :browse_it,
-          'm' => :implementors_of_it, 'n' => :senders_of_it,
+          'm' => :implementors_of_it, 'n' => :senders_of_it, 'e' => :explain_it,
           'f' => :show_find, 'g' => :find_next, 'G' => :find_previous # Cmd-Shift-G sends the capital
         }
       end
@@ -326,6 +368,8 @@ module RubyTalk
         GUI.add_item(@menu, 'Hierarchy of it') { hierarchy_of_it }
         GUI.add_item(@menu, 'Implementors of it', "#{MOD_LABEL}-M") { implementors_of_it }
         GUI.add_item(@menu, 'Senders of it', "#{MOD_LABEL}-N") { senders_of_it }
+        GUI.add_item(@menu, 'Explain it', "#{MOD_LABEL}-E") { explain_it }
+        GUI.add_item(@menu, 'Spawn') { spawn }
         if can_accept?
           @menu.add('separator')
           GUI.add_item(@menu, 'Accept', "#{MOD_LABEL}-S") { accept }

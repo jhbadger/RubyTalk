@@ -1,0 +1,31 @@
+# RuboCop settings. The code base is written in plain, readable Ruby with long explanatory methods, so
+# the size metrics are off; the rest is the default style.
+AllCops:
+  TargetRubyVersion: 3.0
+  NewCops: disable
+  SuggestExtensions: false
+  Exclude:
+    - 'pkg/**/*'
+    - 'vendor/**/*'
+    - 'RubyTalk.app/**/*'
+
+Layout/LineLength:
+  Max: 160
+
+# Windows are built from long constructor/builder methods and the self-test is a long list of checks.
+Metrics:
+  Enabled: false
+
+Style/Documentation:
+  Enabled: false
+
+# Files under lib/rubytalk/gui/ must NOT freeze string literals: the tk gem calls force_encoding on the
+# strings it is given (see the note at the top of each file and the README).
+Style/FrozenStringLiteralComment:
+  Exclude:
+    - 'lib/rubytalk/gui.rb'
+    - 'lib/rubytalk/gui/**/*'
+
+# Tests read better with several assertions per example.
+Minitest/MultipleAssertions:
+  Enabled: false

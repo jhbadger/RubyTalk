@@ -22,6 +22,7 @@ module RubyTalk
         interrupt_stops_a_runaway_do_it background_thread_output windows_from_a_do_it
         versions_window hierarchy_browser debugger class_comment test_runner find_and_replace
         auto_indent_and_brackets remembered_window_layout file_out_and_in tk_console_hidden graphics_window scrolling_list popup_menu text_editing
+        explain_it_by_key spawn_method_window protocols_and_class_versions
       ].freeze
 
       def initialize(main)
@@ -241,6 +242,47 @@ module RubyTalk
         update
         generate(editor.text, "<#{MODIFIER}-Key-m>")
         assert(GUI.windows.last.is_a?(MethodList), 'Cmd-M did not open a method list')
+      end
+
+      # Cmd-E on a selected word writes an explanation to the Transcript.
+      def check_explain_it_by_key
+        editor = Workspace.new(text: 'String').editor
+        editor.text.tag_add('sel', '1.0', '1.end')
+        editor.focus
+        update
+        generate(editor.text, "<#{MODIFIER}-Key-e>")
+        assert(::Transcript.buffer.include?('String is a class'), 'Cmd-E did not explain the selected word')
+        editor.text.tag_remove('sel', '1.0', 'end')
+        Tk.tk_call(editor.text.path, 'mark', 'set', 'insert', '1.3') # inside the word, nothing selected
+        assert(editor.explain_it.to_s.include?('String is a class'), 'the word at the cursor was not explained')
+      end
+
+      # Spawn copies a method (with unaccepted edits) into a window of its own that still accepts in place.
+      def check_spawn_method_window
+        browser = Browser.open(::RtSelfTest, method: :other)
+        browser.code.set_contents("def other\n  :spawned\nend\n")
+        browser.code.spawn
+        window = GUI.windows.last
+        assert(window.is_a?(MethodList), 'Spawn did not open a method window')
+        assert_equal "def other\n  :spawned\nend\n", window.code.contents
+        window.code.accept
+        assert_equal :spawned, ::RtSelfTest.new.other
+        Browser.open(::RtSelfTest).send(:spawn_class)
+        assert(GUI.windows.last.is_a?(Browser), 'Spawn class did not open a browser')
+      end
+
+      # A `# protocol: name` comment files a method under a protocol of your own; a class definition
+      # has versions like a method does.
+      def check_protocols_and_class_versions
+        browser = Browser.open(::RtSelfTest)
+        protocols = ivar(browser, :@protocols)
+        click(protocols, 0)
+        browser.code.set_contents("# protocol: selftest\ndef proto\n  1\nend\n")
+        browser.code.accept
+        assert(ivar(protocols, :@values).include?('selftest'), "protocols: #{ivar(protocols, :@values).inspect}")
+        click_value(protocols, 'selftest')
+        assert(ivar(ivar(browser, :@methods), :@values).include?(:proto), 'the protocol does not list its method')
+        assert(Reflection.versions(::RtSelfTest, :instance, nil).any? { |v| v.kind == :current }, 'no class version')
       end
 
       def check_edit_menu_invokes_command

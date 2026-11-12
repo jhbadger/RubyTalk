@@ -15,14 +15,27 @@ module RubyTalk
   #     ...
   #   end
   #
-  # changes.rb holds only the latest version of each method. When a method is
-  # redefined or removed, the old version is appended to changes.history (same
-  # chunk format), which feeds the "Versions" window.
+  # changes.rb holds only the latest version of each method and class definition. When one is
+  # redefined or removed, the old version is appended to changes.history (same chunk format),
+  # which feeds the "Versions" window.
+  #
+  # Nothing in the file is ever dropped silently:
+  #   * a chunk that fails to replay is reported and kept (and tried again next start);
+  #   * a chunk this version does not understand (an unknown kind, a damaged header) is kept
+  #     exactly as it was written;
+  #   * a file written by a NEWER format than this one is read, but never rewritten.
+  # The file is written to a temporary file and renamed into place, so a crash while saving
+  # leaves the old file whole.
   class ChangeSet
     KINDS = %i[class open method body remove_method].freeze
     HEADER = /\A#!rubytalk\s+(.*)\z/.freeze
+    # Bumped when the chunk format changes in a way older versions cannot read. Files without a
+    # format line (written before it existed) are format 1.
+    FORMAT_VERSION = 1
+    FORMAT_LINE = /\A#\s*format:\s*(\d+)/.freeze
     PREAMBLE = <<~TEXT
       # RubyTalk changes file.
+      # format: #{FORMAT_VERSION}
       # Replayed in order when RubyTalk starts in this directory, and rewritten when it exits.
       # Each chunk begins with a '#!rubytalk' header line; edit with care.
     TEXT
@@ -31,7 +44,8 @@ module RubyTalk
     #          :body (other class-body statement), :remove_method
     # created: true for classes that did not exist before this change
     # at:      when it was recorded (UTC, ISO 8601), nil for entries from older files
-    Entry = Struct.new(:kind, :target, :side, :key, :source, :created, :failed, :at) do
+    # raw_header: only for a chunk this version cannot interpret; it is written back verbatim.
+    Entry = Struct.new(:kind, :target, :side, :key, :source, :created, :failed, :at, :raw_header) do
       def identity
         case kind
         when :class then [:class, target]
@@ -51,6 +65,14 @@ module RubyTalk
 
     attr_reader :path, :entries, :history
 
+    # The format number found in the file at load (nil: no file or no format line), and whether the
+    # file is from a newer RubyTalk. A newer file is read but never overwritten.
+    attr_reader :file_format
+
+    def newer_format?
+      !@file_format.nil? && @file_format > FORMAT_VERSION
+    end
+
     # When true, every change is written to disk as soon as it is recorded
     # (Smalltalk logs each change immediately), so a crash loses nothing.
     attr_accessor :autosave
@@ -61,6 +83,8 @@ module RubyTalk
       @dirty = false
       @autosave = false
       @backed_up = false
+      @file_format = nil
+      @read_only_warned = false
       @history = []          # replaced/removed methods, oldest first
       @history_pending = []  # not yet appended to the history file
     end
@@ -72,7 +96,16 @@ module RubyTalk
 
     # Earlier versions of a method (not the current one), newest first.
     def versions(target, side, key)
-      @history.select { |e| e.target == target && e.side == side && e.key == key.to_s }
+      @history.select { |e| e.kind == :method && e.target == target && e.side == side && e.key == key.to_s }
+              .reverse.first(MAX_VERSIONS)
+    end
+
+    # Earlier versions of a class's definition (a class created in RubyTalk) or of its comment (a class
+    # that already existed), not the current one, newest first. A class-body statement (attr_accessor,
+    # include ...) is its own entry, identified by its text, so editing one makes a new statement, not a
+    # new version of the old one; replaced and removed statements are still archived.
+    def class_versions(target)
+      @history.select { |e| e.target == target && (e.kind == :class || (e.kind == :open && e.key == 'comment')) }
               .reverse.first(MAX_VERSIONS)
     end
 
@@ -158,25 +191,44 @@ module RubyTalk
       entries
     end
 
+    # The "# format: N" line of a changes file, or nil if it has none (an older file).
+    def self.format_of(text)
+      text.each_line do |line|
+        break if HEADER.match?(line.chomp)
+
+        match = FORMAT_LINE.match(line)
+        return match[1].to_i if match
+      end
+      nil
+    end
+
+    # A header this version cannot interpret (unknown kind, damaged) still becomes an entry, marked
+    # failed and carrying its header text, so it is written back exactly as found instead of vanishing.
     def self.entry_from_header(header)
-      attrs = header.split(/\s+/).to_h { |token| token.split('=', 2) }
+      attrs = header.split(/\s+/).to_h do |token|
+        name, value = token.split('=', 2)
+        [name, value]
+      end
       kind = attrs['kind']&.to_sym
-      return nil unless KINDS.include?(kind)
+      return Entry.new(kind || :unknown, attrs['target'], :instance, attrs['key'], nil, false, true, attrs['at'], header) unless KINDS.include?(kind)
 
       Entry.new(kind, attrs['target'], (attrs['side'] || 'instance').to_sym, attrs['key'], nil,
                 attrs['created'] == 'true', false, attrs['at'])
     end
 
-    # Loads and replays the file. A chunk that fails is reported to the
-    # Transcript and kept (so saving never silently drops it).
+    # Loads and replays the file. A chunk that fails is reported to the Transcript and kept (so
+    # saving never silently drops it); #failed_entries lists them.
     def load!
       load_history
       return 0 unless @path && File.file?(@path)
 
-      @entries = self.class.parse(File.read(@path, encoding: 'UTF-8')).compact
+      text = File.read(@path, encoding: 'UTF-8')
+      @file_format = self.class.format_of(text)
+      @entries = self.class.parse(text).compact
+      warn_newer_format
       applied = 0
       @entries.each do |entry|
-        Compiler.replay(entry)
+        replay_entry(entry)
         applied += 1
       rescue *Evaluator::RECOVERABLE => e
         entry.failed = true
@@ -184,36 +236,91 @@ module RubyTalk
       end
       @dirty = false
       ::Transcript.show_cr("Loaded #{applied} of #{@entries.size} changes from #{@path}")
+      report_failures
       applied
     end
 
-    # --- Writing ------------------------------------------------------------
+    # The entries that did not replay at the last load (still in the file, tried again next start).
+    def failed_entries
+      @entries.select(&:failed)
+    end
+
+    # --- Writing -----------------------------------------------------------
 
     def to_text
       chunks = @entries.map { |entry| chunk_text(entry) }
       ([PREAMBLE] + chunks).join("\n") << "\n"
     end
 
-    # Writes the file if anything changed this session. Returns the path, or nil
-    # when there was nothing to write.
+    # Writes the file if anything changed this session. Returns the path, or nil when there was
+    # nothing to write (or the file is from a newer RubyTalk and must not be overwritten).
+    #
+    # The new text goes to changes.rb.tmp, is flushed to disk, and only then renamed over the real
+    # file, so the file on disk is always either the old one or the new one, whole. If anything goes
+    # wrong the temporary file is removed and the error raised; the changes stay unsaved in memory
+    # (dirty), and the next save tries again.
     def save!
       return nil unless @path
       return nil unless @dirty || (!File.exist?(@path) && !@entries.empty?)
+      return refuse_newer_format if newer_format?
 
       # Keep one backup per session: the file exactly as it was at startup.
       if File.exist?(@path) && !@backed_up
         FileUtils.cp(@path, "#{@path}.bak")
         @backed_up = true
       end
-      temporary = "#{@path}.tmp"
-      File.write(temporary, to_text, encoding: 'UTF-8')
-      File.rename(temporary, @path)
+      write_atomically(@path, to_text)
       flush_history
       @dirty = false
       @path
     end
 
     private
+
+    def write_atomically(path, text)
+      temporary = "#{path}.tmp"
+      File.open(temporary, 'w', encoding: 'UTF-8') do |file|
+        file.write(text)
+        file.flush
+        file.fsync
+      end
+      File.rename(temporary, path)
+    rescue StandardError
+      FileUtils.rm_f(temporary)
+      raise
+    end
+
+    def replay_entry(entry)
+      raise ArgumentError, "unknown kind of change (#{entry.raw_header.to_s[0, 60]}): written by a newer RubyTalk?" if entry.raw_header
+
+      Compiler.replay(entry)
+    end
+
+    def warn_newer_format
+      return unless newer_format?
+
+      ::Transcript.show_cr("#{File.basename(@path)} is format #{@file_format}, newer than this RubyTalk understands " \
+                           "(format #{FORMAT_VERSION}). It is loaded as far as possible but will NOT be overwritten.")
+    end
+
+    # Said once, when a save is refused.
+    def refuse_newer_format
+      return nil if @read_only_warned
+
+      @read_only_warned = true
+      ::Transcript.show_cr("Not saving #{File.basename(@path)}: it was written by a newer RubyTalk (format " \
+                           "#{@file_format}). Your latest changes are in memory only: use System > File Out Changes as Ruby.")
+      nil
+    end
+
+    def report_failures
+      failed = failed_entries
+      return if failed.empty?
+
+      ::Transcript.show_cr("WARNING: #{failed.size} of #{@entries.size} changes could not be applied. They are still in " \
+                           "#{File.basename(@path)} and will be tried again next time; fix or remove them there.")
+      failed.each { |entry| ::Transcript.show_cr("  not applied: #{entry}") }
+    end
 
     # Autosave must never break an Accept: if the disk write fails, say so once
     # and fall back to saving on exit.
@@ -224,9 +331,10 @@ module RubyTalk
       ::Transcript.show_cr("changes.rb autosave disabled (#{e.class}: #{e.message}); will retry when you quit.")
     end
 
-    # Remember a method version that is about to be replaced or removed.
+    # Remember a version (of a method, class definition, comment or statement) that is about to be
+    # replaced or removed.
     def archive(entry)
-      return unless entry.kind == :method && entry.source
+      return unless entry.source
 
       @history << entry
       @history_pending << entry
@@ -253,6 +361,8 @@ module RubyTalk
     end
 
     def header_line(entry)
+      return "#!rubytalk #{entry.raw_header}" if entry.raw_header
+
       parts = ["kind=#{entry.kind}", "target=#{entry.target}"]
       parts << "side=#{entry.side}" if %i[method body remove_method].include?(entry.kind)
       parts << "key=#{entry.key}" if entry.key

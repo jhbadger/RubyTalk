@@ -10,20 +10,23 @@ module RubyTalk
 
       attr_reader :code
 
-      def initialize(title, hits)
+      # rows: how tall the list of methods is (a spawned method needs only one).
+      def initialize(title, hits, rows: 10)
         @hits = hits
         @changes = RubyTalk.changes
         @window = TkToplevel.new
         GUI.window_title(@window, "#{title} (#{hits.size})")
         GUI.place(@window, kind: :method_list)
-        @list = SelectableList.new(@window, width: 72, height: 10) { |hit| hit_selected(hit) }
+        @list = SelectableList.new(@window, width: 72, height: rows) { |hit| hit_selected(hit) }
         @list.frame.pack(side: 'top', fill: 'x')
         @list.set(hits, hits.map(&:label))
         @list.box.bind('Double-Button-1') { GUI.safely { browse } }
-        @list.context_menu([['Browse', -> { browse }], ['Versions...', -> { versions }]])
+        @list.context_menu([['Browse', -> { browse }], ['Spawn', -> { spawn }], ['Versions...', -> { versions }]])
         @status = TkLabel.new(@window, text: +'', anchor: 'w')
         @status.pack(side: 'top', fill: 'x', padx: 6)
         @code = CodeEditor.new(@window, width: 90, height: 16, on_accept: -> { accept }, highlight: true,
+                                        scope: -> { [@list.selected_value&.klass, @list.selected_value&.side] },
+                                        on_spawn: ->(text) { spawn(text) },
                                         evaluator: ->(source) { Evaluator.evaluate(source, Evaluator.new_binding, file: 'method list') })
         @code.frame.pack(side: 'top', fill: 'both', expand: 1)
         GUI.build_menubar(@window, -> { @code })
@@ -72,6 +75,18 @@ module RubyTalk
       def browse
         hit = @list.selected_value
         Browser.open(hit.klass, method: hit.name, side: hit.side) if hit
+      end
+
+      # The selected method in a window of its own, with +text+ (edits not yet accepted) if given.
+      def spawn(text = nil)
+        hit = @list.selected_value
+        return status('Select a method first.') unless hit
+
+        if hit.name
+          GUI.spawn_method(hit.klass, hit.side, hit.name, text)
+        else
+          GUI.spawn_workspace(text || @code.contents) # a class-body statement has no method to recompile
+        end
       end
     end
   end

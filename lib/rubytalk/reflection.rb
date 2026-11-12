@@ -30,10 +30,19 @@ module RubyTalk
       names.each { |name| map[name] = category }
     end.freeze
 
+    # The fixed entries of the protocol list: everything, then Ruby's visibility levels. Protocols of your
+    # own (see Reflection.protocol_list) go between "all" and these.
     PROTOCOLS = [['-- all --', :all], %w[public public], %w[protected protected], %w[private private]]
                 .map { |label, key| [label, key.to_sym] }.freeze
 
+    UNCLASSIFIED = 'as yet unclassified'
+
     MODULE_NAME = Module.instance_method(:name)
+
+    # Source files that mention "protocol:" at all, with their lines, so asking for the protocol of every
+    # method of a class reads each file once (and never keeps files that have no marker).
+    FileInfo = Struct.new(:mtime, :lines)
+    @file_cache = {}
 
     Catalog = Struct.new(:groups, :names) do
       def classes_in(category)
@@ -269,18 +278,71 @@ module RubyTalk
       side == :class ? klass.singleton_class : klass
     end
 
-    def methods_for(klass, side, protocol, inherited)
+    # Method names for a protocol: :all, a visibility (:public ...), :unclassified (no protocol comment), or
+    # the name of a protocol of your own (a String).
+    def methods_for(klass, side, protocol, inherited, changes = RubyTalk.changes)
       owner = owner_for(klass, side)
       names = case protocol
               when :public then owner.public_instance_methods(inherited)
               when :protected then owner.protected_instance_methods(inherited)
               when :private then owner.private_instance_methods(inherited)
               else
-                owner.public_instance_methods(inherited) +
-                owner.protected_instance_methods(inherited) +
-                owner.private_instance_methods(inherited)
+                every = owner.public_instance_methods(inherited) +
+                        owner.protected_instance_methods(inherited) +
+                        owner.private_instance_methods(inherited)
+                every = every.uniq.select { |name| protocol_matches?(klass, side, name, protocol, changes) } unless protocol == :all
+                every
               end
       names.uniq.sort_by(&:to_s)
+    end
+
+    def protocol_matches?(klass, side, name, protocol, changes)
+      own = method_protocol(klass, side, name, changes)
+      protocol == :unclassified ? own.nil? : own == protocol
+    end
+
+    # The protocol list for a class: "-- all --", the protocols its methods are filed under (a
+    # `# protocol: name` comment above the def; sorted), "as yet unclassified" when some methods have none,
+    # then public, protected and private. Returns [[label, key], ...].
+    def protocol_list(klass, side, inherited = false, changes = RubyTalk.changes)
+      found = methods_for(klass, side, :all, inherited).map { |name| method_protocol(klass, side, name, changes) }
+      names = found.compact.uniq.sort_by { |name| [name.downcase, name] }
+      list = [PROTOCOLS.first]
+      names.each { |name| list << [name, name] }
+      list << [UNCLASSIFIED, :unclassified] if names.any? && found.any?(&:nil?)
+      list + PROTOCOLS.drop(1)
+    end
+
+    # The protocol a method is filed under, or nil. Read from the method's own source (the version in
+    # changes.rb if RubyTalk changed it, else the Ruby file it came from). C methods have none.
+    def method_protocol(klass, side, name, changes = RubyTalk.changes)
+      method = method_object(klass, side, name) or return nil
+      target, owner_side = owner_target(method.owner)
+      entry = target && changes&.find_method(target, owner_side, name)
+      text = entry ? entry.source : marked_method_source(method)
+      text && Source.protocol_of(text)
+    end
+
+    def marked_method_source(method)
+      file, line = method.source_location
+      return nil unless file && line
+
+      info = file_info(file) or return nil
+      Source.extract_from_lines(info.lines, line - 1)
+    end
+
+    # nil for a file that is unreadable or never says "protocol:" (so almost every file costs one read).
+    def file_info(file)
+      mtime = File.mtime(file)
+      cached = @file_cache[file]
+      return cached.lines && cached if cached && cached.mtime == mtime
+
+      text = File.read(file, encoding: 'UTF-8')
+      info = FileInfo.new(mtime, text.match?(/protocol:/i) ? text.lines : nil)
+      @file_cache[file] = info
+      info.lines && info
+    rescue SystemCallError, EncodingError
+      nil
     end
 
     def method_object(klass, side, name)
@@ -311,8 +373,10 @@ module RubyTalk
       changed ? "* #{name}" : name.to_s
     end
 
-    def method_template
-      "def method_name(arg)\n  # comment\n  \nend\n"
+    # A starting point for a new method. In a protocol of your own it starts with that protocol's comment.
+    def method_template(protocol = nil)
+      header = protocol.is_a?(String) ? "# protocol: #{protocol}\n" : ''
+      "#{header}def method_name(arg)\n  # comment\n  \nend\n"
     end
 
     def method_text(klass, side, name, changes = RubyTalk.changes)
@@ -342,20 +406,37 @@ module RubyTalk
     # earlier ones from changes.history, then the original library method (if RubyTalk
     # has overridden or removed one in this session).
     def versions(klass, side, name, changes = RubyTalk.changes)
+      return class_versions(klass, changes) if name.nil?
+
       target = name_of(klass)
       list = []
       current = changes&.find_method(target, side, name)
       list << Version.new(:current, "Current#{when_label(current.at)}", current.source, current.at) if current
-      (changes&.versions(target, side, name) || []).each do |entry|
-        lines = entry.source.lines.size
-        list << Version.new(:previous, "#{when_label(entry.at, '')}  (#{lines} line#{'s' unless lines == 1})",
-                            entry.source, entry.at)
-      end
+      (changes&.versions(target, side, name) || []).each { |entry| list << previous_version(entry) }
       original = Compiler.originals[[klass, side, name.to_s]]
       if original
         list << Version.new(:original, 'Original (library)', text_for_method(original.method, side, name), nil)
       end
       list
+    end
+
+    # The versions of a class definition (a class created in RubyTalk) or of the class comment
+    # (a class that already existed), newest first, in the same shape as #versions. For a
+    # library class whose comment you changed, the last entry is the original comment.
+    def class_versions(klass, changes = RubyTalk.changes)
+      name = name_of(klass)
+      list = []
+      created = changes&.class_entry(name)
+      current = created || changes&.open_entry(name, 'comment')
+      list << Version.new(:current, "Current#{when_label(current.at)}", current.source, current.at) if current
+      (changes&.class_versions(name) || []).each { |entry| list << previous_version(entry) }
+      list << Version.new(:original, 'Original (library)', "#{file_comment(klass)}#{class_template(klass)}", nil) if current && !created
+      list
+    end
+
+    def previous_version(entry)
+      lines = entry.source.lines.size
+      Version.new(:previous, "#{when_label(entry.at, '')}  (#{lines} line#{'s' unless lines == 1})", entry.source, entry.at)
     end
 
     # " - 2026-11-05 12:03" in local time; "earlier session" when unknown.

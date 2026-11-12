@@ -7,8 +7,9 @@
 #   Browser      class and method browser; Accept defines or redefines code
 #   changes.rb   log of class/method changes, replayed at startup, saved at exit
 
+require_relative 'rubytalk/version'
+
 module RubyTalk
-  VERSION = '0.1.0'
   LIB_DIR = File.expand_path(__dir__)
 
   class << self
@@ -87,6 +88,7 @@ require_relative 'rubytalk/indenter'
 require_relative 'rubytalk/bracket_matcher'
 require_relative 'rubytalk/compiler'
 require_relative 'rubytalk/search'
+require_relative 'rubytalk/explainer'
 require_relative 'rubytalk/exchange'
 require_relative 'rubytalk/test_runner'
 require_relative 'rubytalk/preferences'

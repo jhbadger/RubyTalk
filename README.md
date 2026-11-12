@@ -24,7 +24,7 @@ ruby ~/lib/src/rubytalk/bin/rubytalk --selftest
 ```
 
 When a check fails it also prints the last few Transcript lines, which usually hold the real reason (an error
-the check itself could not see). It cannot test things that need a person; see the checklist at the end.
+the check itself could not see). It cannot test things that need a person (pop-up menus, how colours look, quitting cleanly).
 
 ## macOS app and icon
 
@@ -64,6 +64,21 @@ ruby bin/rubytalk --icon-png 512 icon.png         # just the icon, any size
 * An app you build yourself carries no quarantine flag, so it opens normally. If you copy one to
   another Mac by download or AirDrop, use right-click > Open the first time (it is not signed).
 
+## Install as a gem, and develop
+
+```
+gem build rubytalk.gemspec && gem install rubytalk-0.1.0.gem   # puts `rubytalk` on your path (needs Tcl/Tk: see Run)
+bundle install               # development tools only; the tk gem is optional (see the Gemfile)
+rake test                    # every test file, each in its own process (no display or Tcl/Tk needed)
+rake selftest                # the real windows with real Tk
+rake rubocop                 # style (config in .rubocop.yml)
+rake build                   # the gem, into pkg/
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs `rake test` on Ruby 3.0 to 3.4 on Linux and macOS and
+checks that the gem builds. The style check and `--selftest` (real Tk under a virtual display) run as
+separate jobs that report but do not fail the build.
+
 ## The windows
 
 **Transcript** (the main window). Output area and editor in one, as in Smalltalk.
@@ -83,6 +98,7 @@ available to later evaluations in the same workspace.
 | Browse it  | Cmd-B    | Ctrl-B   | evaluate, open the Browser on the result's class       |
 | Implementors of it | Cmd-M | Ctrl-M | selection (or word at cursor) as a method name: who defines it |
 | Senders of it | Cmd-N | Ctrl-N   | selection (or word at cursor) as a method name: who calls it |
+| Explain it | Cmd-E    | Ctrl-E   | selection (or word at cursor): what it is, in the Transcript (nothing is run) |
 | Accept     | Cmd-S    | Ctrl-S   | (Browser code pane) compile and log the code           |
 | Stop       | Cmd-.    | Ctrl-.   | interrupt the running do it (also System > Interrupt Running Code) |
 
@@ -131,6 +147,41 @@ right-click menu.
   A local variable with the same name also matches, calls made through `send` with a
   computed name are invisible, methods built by `define_method` are found only if their
   source can be read, and `[]`/`[]=` are not searched.
+  What each method uses is remembered after the first search, so repeating a search (or searching for
+  another name) is several times faster; nothing needs refreshing: a file you edit, or a method you
+  Accept, is simply looked at again.
+
+**Explain it** (Cmd-E, Edit > Explain it, or the right-click menu) says what a word is, without running
+anything. Select a word, or just put the cursor in it, and the answer is written to the Transcript. It
+works through the same questions Squeak's explain does, in this order:
+
+* a keyword (`self`, `nil`, `yield` ...): what it means;
+* a **local variable or parameter**: where the code in that pane declares it ("amount is a parameter of method
+  deposit (line 1)"). A call in a default value (`def m(a, b = helper)`) is not mistaken for a parameter;
+* an **`@instance variable`**: which methods of the browser's selected class use it (comments and strings
+  do not count), and whether a reader or writer method exists. With no class in view it says what the word is;
+* a `@@class variable` or `$global`: its current value;
+* a **Constant**: the class or module (superclass, mixins, method counts, source file, first line of its
+  comment, and whether you created it in RubyTalk); `Foo::Bar` works too;
+* a `:symbol`: says so, then explains the name as a selector;
+* anything else is a **message selector**: if the class in view has such a method, its owner, visibility,
+  arity and source location, then the classes that implement it (the first 12; Implementors of it lists all).
+
+Which class is "in view" comes from the pane: the Browser's selected class and side, or the selected entry in a
+Method List. Workspaces and the Inspector have none, so instance variables and selectors are explained in
+general terms there. Locals are found by parsing the pane's text with Ripper, so they work in a Workspace too.
+
+**Spawn** copies what you are looking at into a window of its own, as in Smalltalk-80.
+
+* In any code pane (Edit > Spawn, or right-click > Spawn): with text selected, the selection goes into a new
+  Workspace; with nothing selected, the whole pane is spawned. In the Browser and a Method List, a spawned
+  method opens in its own method window (a Method List with a single entry) and keeps **unaccepted edits**:
+  Accept there recompiles the method where it lives. The original pane is put back to the stored source, so
+  the edits exist in exactly one place. A class definition or a new-method template goes to a Workspace.
+* Browser method list, right-click > **Spawn method**; Method List, right-click > **Spawn**.
+* Browser class list, right-click > **Spawn class**: a new Browser holding only that class (the class list
+  is just the one class), for working on one class without the rest of the system in the way. Removing the
+  class closes that window.
 
 **Debugger.** When a do it raises an error, a Debugger window opens (instead of a plain backtrace):
 the stack on the top left, the code of the selected frame on the top right with its current line
@@ -143,7 +194,10 @@ happened: the stack has already unwound, so "fix and re-run" replaces "fix and p
 How it works: while code runs, a `TracePoint` records the binding at every `raise`; a Binding keeps its
 locals alive after the stack unwinds. **Limits:** only the frame that raised has locals (Ruby keeps no
 bindings for the others, which show source only); errors raised and rescued inside your code are
-recorded too (the last 100), which costs a little in code that raises very many exceptions.
+recorded too (the last 100), which costs a little in code that raises very many exceptions (about
+9 times slower in a loop that does nothing else). `RubyTalk::Evaluator.max_records = 20` keeps fewer, and
+`= 0` turns recording off altogether (no TracePoint is set up; the Debugger then shows the backtrace and the
+source but no variables). Recording only happens while a do it is running.
 
 **Class comments.** The comment block directly above `class Foo` is the class comment, shown at the top
 of the definition pane. Edit it and Accept. For a class you created it is part of its definition. For
@@ -226,6 +280,34 @@ a library method nobody overrode is logged so it persists, and Versions can brin
 `changes.history` uses the same chunk format as `changes.rb`, appended to as you work (at most the
 newest 100 versions of a method are shown); delete it to forget the history.
 
+**Versions of a class.** Class list right-click > **Versions of this class...** does the same for a
+class you created in RubyTalk (each Accept of its definition keeps the one it replaces) and for the
+comment of a class that already existed (the last entry is then the original comment from the library's
+source). Revert works the same way and can itself be undone. A class-body statement (`attr_accessor`,
+`include` ...) is its own entry, identified by its text: editing one makes a new statement rather than a new
+version of the old one, so statements have no version list, but a statement that is replaced or removed
+(or goes with a removed class) is still kept in `changes.history`.
+
+**Protocols.** Ruby has no protocol (category) for methods, so RubyTalk uses a convention: a comment
+line `# protocol: accessing` in the comment block directly above a `def`:
+
+```ruby
+# Answers the balance.
+# protocol: accessing
+def balance
+  @balance
+end
+```
+
+The Browser's protocol list then shows, after "-- all --", the protocols the class's methods are filed
+under (sorted), "as yet unclassified" if some methods have none, and then public / protected / private as
+before. It follows the *instance / class* choice and *show inherited*. Select one of your protocols and the
+new-method template starts with its comment, so a new method lands in it; to file a method elsewhere, edit
+the comment and Accept; to start a new protocol, type `# protocol: name` above a method and Accept (the name
+appears in the list). It also works for ordinary Ruby files: a library class that carries these comments is
+sorted the same way. Only the comment block above the `def` counts (not comments inside the body), and C
+methods are always unclassified.
+
 **Hierarchy.** Class list right-click > **Hierarchy of this class**, or Edit > **Hierarchy of it**
 (select a class name or any expression; a non-class gives its class's hierarchy). The window is a
 normal browser whose class list shows the superclass chain from BasicObject down, then **all**
@@ -260,9 +342,21 @@ def deposit(n)
 end
 ```
 
-A chunk that fails to apply is reported in the Transcript and kept in the file. If a disk
-write ever fails, autosave turns itself off with a Transcript message and RubyTalk retries
-when you quit.
+Nothing in the file is dropped silently:
+
+* A chunk that fails to apply is reported in the Transcript, with a summary ("WARNING: 2 of 17 changes could
+  not be applied ...") listing each one. It stays in the file and is tried again at the next start (so a
+  change that needed a library you have since installed simply works).
+* A chunk RubyTalk does not understand (an unknown `kind=`, a damaged header) is kept exactly as written.
+* The file says which format it is in (`# format: 1` in the first lines). A file with a *newer* format
+  number than your RubyTalk knows is read as far as possible but **never overwritten**; the Transcript says so,
+  and System > File Out Changes as Ruby still works (chunks RubyTalk does not understand are left out of the filed-out Ruby). Files without the line (older ones) load as format 1.
+* Saving writes `changes.rb.tmp`, flushes it to disk, then renames it over the real file, so a crash or a
+  full disk leaves either the old file or the new one, whole. A leftover `.tmp` after a crash is harmless
+  and replaced by the next save.
+
+If a disk write ever fails, autosave turns itself off with a Transcript message, the change stays in memory,
+and RubyTalk retries when you quit.
 Workspace evaluations (do it / print it) are not logged or replayed.
 
 ## Layout and tests
@@ -276,6 +370,7 @@ lib/rubytalk/source.rb       Ripper-based statement splitting and method-source 
 lib/rubytalk/changes.rb      ChangeSet: parse, replay, write changes.rb
 lib/rubytalk/compiler.rb     Accept, replay, remove method/class
 lib/rubytalk/search.rb       implementors / senders
+lib/rubytalk/explainer.rb    Explain it: what a word is (no GUI)
 lib/rubytalk/diff.rb         line diff for the Versions window
 lib/rubytalk/stack.rb        what the debugger shows: frames, source, variables, method to edit
 lib/rubytalk/test_runner.rb  runs Minitest classes and reports plain outcomes
@@ -293,6 +388,12 @@ lib/rubytalk/reflection.rb   categories, method lists, definition text (no GUI)
 lib/rubytalk/gui/*.rb        Tk windows (gui/graphics_window.rb hosts MVC windows; gui/self_test.rb is the --selftest; versions_window.rb the Versions window; debugger.rb the Debugger; test_results_window.rb the test results; find_bar.rb Find and Replace)
 test/test_core.rb            headless tests of everything above
 test/test_gui_smoke.rb       drives the windows against a recording stand-in for tk
+test/test_explainer.rb       Explain it, headless
+test/test_changes_safety.rb  changes.rb format version, atomic saves (including a real kill -9 during a save), failed chunks
+test/test_class_versions.rb  versions of class definitions and comments
+test/test_protocols.rb       `# protocol:` categories, in the reflection layer and the Browser
+test/test_parsing.rb         one-pass statement splitting, Ripper syntax errors, the Senders cache, raise recording
+test/test_gui_explain_spawn.rb  Explain it and Spawn in the windows, against the stand-in for tk
 test/test_highlighter.rb      syntax highlighting (token classes, byte-to-character columns, bad input)
 test/test_graphics.rb        graphics classes and the MVC framework, headless
 test/test_icon.rb            icon pixels, .icns structure, app bundle (runs its launcher), CLI
@@ -301,6 +402,12 @@ test/test_icon.rb            icon pixels, .icns structure, app bundle (runs its 
 ```
 ruby test/test_core.rb
 ruby test/test_gui_smoke.rb
+ruby test/test_explainer.rb
+ruby test/test_changes_safety.rb
+ruby test/test_class_versions.rb
+ruby test/test_protocols.rb
+ruby test/test_parsing.rb
+ruby test/test_gui_explain_spawn.rb
 ruby test/test_icon.rb
 ruby test/test_highlighter.rb
 ruby test/test_graphics.rb
@@ -311,56 +418,6 @@ validate real Tk behaviour. The fake is strict about one real-Tk trap: it raises
 a frozen string reaches a widget (the tk gem calls `force_encoding` on what it is given), which is
 why the files under `gui/` do not use `# frozen_string_literal: true`. It also runs the
 `--selftest` checks, so the self-test's own logic is covered even without a display.
-
-## Manual checklist (things --selftest cannot do)
-
-1. Right-click in a code pane, a class list and a method list: the pop-up menus appear and
-   their items work. (On a Mac, Control-click and two-finger click should both work.)
-2. Windows open staggered, not stacked exactly on top of each other, until you have a saved layout.
-3. Quit from the System menu, closing the Transcript window, Cmd-Q and the application menu's
-   Quit each end the program with no error dialog; `changes.rb` is up to date afterwards.
-   (`--selftest` proves Cmd-Q reaches the close handler, but not that the program then exits.)
-4. Make a change, then kill the process (`kill -9`); restart: the change is still there.
-5. Type in the filter box above the class list: the list narrows as you type.
-6. Syntax colours, the find highlight and the bracket highlight look right in your appearance (light and
-   dark), and selected text stays readable.
-7. **Debugger:** in a Workspace run `x = 5; 1 / 0`: a window shows the error, the stack, `x = 5` in the
-   variables, and the console answers `x + 1` with 6. For a method you defined, double-click its frame (or
-   Edit Method): it opens in a Browser; fix it, Accept, then Run Again.
-8. **Stop:** in a Workspace type `loop {}`, press Cmd-D, then Cmd-. (or System > Interrupt Running Code): the
-   window stays responsive while it runs (try moving it, opening the System menu), the title says "running",
-   and Stop ends it with "Interrupted." in the Transcript. Try `Transcript.show_cr('hi'); sleep 2; :done` and
-   watch the output appear before the 2 seconds end.
-9. **Versions:** in the Browser pick a method you defined, Accept a changed version, right-click > Versions...:
-   both versions are listed; tick the diff box; Revert; the browser shows the old text.
-10. **Hierarchy:** right-click a class > Hierarchy of this class: the list starts at BasicObject and the class
-    you chose is selected and shown.
-11. **Class comment:** select a class, type `# Some words.` above `class`, Accept, open a second Browser on it:
-    the comment is there.
-12. **Tests:** make a class with a `FooTest < Minitest::Test` (class list > New test class), give it a passing
-    and a failing test, right-click the class > Run tests: red bar, the failure first with its message; fix
-    the test, Run Failures: green bar.
-13. **Find:** Cmd-F in a Workspace, type a word that occurs twice: both are coloured, the first selected;
-    Cmd-G steps and wraps; Replace All with a replacement; Cmd-Z undoes it in one step; Escape closes.
-14. **Indent:** type `def foo`, Return (the next line is indented), `if x`, Return, `a`, Return, `end` (it
-    snaps back two spaces); put the cursor just after a `)` and see it and its `(` highlighted.
-15. **Layout:** move and resize the Browser, quit, start again: it opens where you left it. (Delete
-    `~/Library/Application Support/RubyTalk/layout` to start afresh.)
-16. **File out / in:** make a class with a couple of methods, System > File Out Changes as Ruby..., and check the
-    file needs no RubyTalk (in plain `irb`: `load 'thatfile.rb'`); then in RubyTalk remove the class and System >
-    File In... the file: the class and its methods are back in the Browser as individual methods.
-17. **Graphics:** in a Workspace run `GraphicsExamples::Counter.open`: a small window appears; clicking + - and
-    Reset changes the count; a button looks pressed while the mouse is down and does nothing if you drag off it
-    before releasing. `GraphicsExamples::Sketch.open`: drag with the left button to draw, press `r` then draw
-    (red), `5` for a thicker pen, `c` to clear. Try the right and middle buttons (erase, clear). Close the
-    windows with their close buttons. `Form.new(100, 100).tap { |f| Pen.new(f).spiral(40) }.show` shows a Form.
-18. **Widgets:** `GraphicsExamples::Notes.open`: click New note, type in the editor (the list title follows your first
-    line), drag to select, double click a word, Cmd-C then Cmd-V (paste the same text into another app too),
-    Cmd-Z to undo. Press the **yellow** button on the list for its menu (on a Mac that is the middle button; try
-    control-click or two-finger click if your mouse has none: if no button opens it, tell me which numbers your
-    mouse gives). Use the wheel and scroll bar on a long note, and Up/Down on the list after clicking it.
-19. System > Change Directory...: pick a folder, confirm; RubyTalk restarts there (check the window title).
-    Quit and start the app again from Finder: it opens in that folder.
 
 ## Graphics: Point, Rectangle, Form, BitBlt, Pen, Paths
 
@@ -496,8 +553,10 @@ Transcript, and RubyTalk hides it at startup. `--selftest` checks that it is hid
 * The debugger cannot resume or step, and shows locals only for the frame that raised (see Debugger).
 * Stop cannot interrupt one long C call (see "Running code and Stop"); and code that touches Tk
   directly from a do it must hand the work to `RubyTalk::GUI.on_main { ... }` itself.
-* Versions cover methods, not class definitions or class-body statements.
-* No protocol names of your own: Ruby has no equivalent, so the protocol list is Ruby's visibility.
+* Versions cover methods, class definitions and class comments; a class-body statement is a separate entry per
+  text, so it has no list of earlier versions (see "Versions of a class").
+* Protocols are a comment convention (`# protocol: name`), not something Ruby knows about: there is no
+  menu to move a method between protocols, you edit the comment.
 * File in decomposes classes written in the ordinary way (one-line header, `end` last). Anything fancier
   is recorded whole, so it appears as a class definition rather than as separate methods.
 * Find marks at most 1000 matches on screen (all are counted and replaced).

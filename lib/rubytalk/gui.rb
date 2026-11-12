@@ -385,6 +385,25 @@ module RubyTalk
         RubyTalk.changes ? File.dirname(RubyTalk.changes.path) : Dir.pwd
       end
 
+      # Explain it: the answer goes to the Transcript (nothing is run, nothing modal gets in the way).
+      def show_explanation(word, text)
+        heading = word.to_s.empty? ? 'Explain:' : "Explain #{word}:"
+        ::Transcript.show_cr(heading)
+        text.to_s.each_line { |line| ::Transcript.show_cr("  #{line.chomp}") }
+      end
+
+      # Spawn: a new Workspace holding +text+.
+      def spawn_workspace(text)
+        Workspace.new(text: text, title: 'Workspace (spawned)')
+      end
+
+      # Spawn a method into a window of its own (a Method List with one entry, so Accept still recompiles
+      # it where it lives). +text+ replaces the stored source, to carry unaccepted edits along.
+      def spawn_method(klass, side, name, text = nil)
+        hit = Search::Hit.new(klass, side, name.to_s, text)
+        MethodList.new("Spawn #{hit.label}", [hit], rows: 1)
+      end
+
       # Run an implementors/senders search and show the results in a Method List.
       def show_method_list(kind, selector)
         ::Transcript.show_cr("Searching for #{kind} of #{selector}...")
@@ -529,6 +548,8 @@ module RubyTalk
         edit.add('separator')
         add_item(edit, 'Implementors of it', "#{MOD_LABEL}-M") { provider.call&.implementors_of_it }
         add_item(edit, 'Senders of it', "#{MOD_LABEL}-N") { provider.call&.senders_of_it }
+        add_item(edit, 'Explain it', "#{MOD_LABEL}-E") { provider.call&.explain_it }
+        add_item(edit, 'Spawn') { provider.call&.spawn }
         if provider.call&.can_accept?
           edit.add('separator')
           add_item(edit, 'Accept', "#{MOD_LABEL}-S") { provider.call&.accept }

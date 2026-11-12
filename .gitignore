@@ -4,3 +4,5 @@
 /changes.rb.tmp
 /changes.history
 RubyTalk.app/
+/pkg/
+*.gem

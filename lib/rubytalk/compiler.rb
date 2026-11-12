@@ -214,8 +214,9 @@ module RubyTalk
 
     # Go back to +version+ (a Reflection::Version). The version being replaced is kept in the
     # history, so a revert can itself be reverted. Returns an Outcome.
+    # With name nil it is the class definition (or comment) that is reverted.
     def revert(klass, side, name, version, changes)
-      if version.kind == :original
+      if version.kind == :original && name
         restore_original(klass, side, name, changes)
         return Outcome.new(ok: true, message: "#{Reflection.name_of(klass)}##{name} restored to the original",
                            klass: klass, side: side, method_name: name.to_s)

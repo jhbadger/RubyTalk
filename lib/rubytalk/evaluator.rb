@@ -28,7 +28,7 @@ module RubyTalk
 
     RaiseRecord = Struct.new(:exception, :binding)
 
-    # How many recent raises to remember (most code rescues many exceptions internally).
+    # How many recent raises to remember by default (most code rescues many exceptions internally).
     MAX_RECORDS = 100
 
     # Exceptions we recover from when running user code or replaying changes.
@@ -47,12 +47,26 @@ module RubyTalk
     FORCE_AFTER = 3.0
 
     @driver = nil
+    @max_records = MAX_RECORDS
     @current = nil
     @stopped_at = nil
     @killed = false
 
     class << self
       attr_accessor :driver
+
+      # How many recent raises the debugger remembers while code runs (each one keeps a Binding alive).
+      # 0 turns recording off altogether: no TracePoint is set up, so code that raises very many
+      # exceptions runs at full speed (about 9 times faster in a loop that does nothing else), and
+      # the Debugger shows the backtrace but no variables. Recording only ever happens while a do
+      # it is running, never in between.
+      attr_reader :max_records
+
+      def max_records=(count)
+        raise ArgumentError, "max_records must be a whole number, 0 or more (got #{count.inspect})" unless count.is_a?(Integer) && count >= 0
+
+        @max_records = count
+      end
     end
 
     module_function
@@ -116,14 +130,18 @@ module RubyTalk
       Result.new(false, nil, e, failure_for(e, records, source, rerun))
     end
 
-    # Run the block remembering the binding at each raise, on the current thread.
+    # Run the block remembering the binding at each raise, on the current thread (not at all if
+    # max_records is 0).
     def capturing(records)
+      limit = max_records
+      return yield if limit.zero?
+
       trace = TracePoint.new(:raise) do |event|
         exception = event.raised_exception
         next if records.any? { |record| record.exception.equal?(exception) } # keep the first raise
 
         records << RaiseRecord.new(exception, (event.binding rescue nil)) # rubocop:disable Style/RescueModifier
-        records.shift if records.size > MAX_RECORDS
+        records.shift if records.size > limit
       end
       begin
         trace.enable(target_thread: Thread.current)

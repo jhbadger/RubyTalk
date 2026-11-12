@@ -16,22 +16,26 @@ module RubyTalk
     # With hierarchy: true the class list is the hierarchy of one class instead of a
     # category: its superclass chain from BasicObject, then all its subclasses, each
     # level indented. Everything else works the same (browse, accept, versions ...).
+    #
+    # With single: true (Spawn class) the class list holds just that one class: a browser
+    # to work on one class without the rest of the system in the way.
     class Browser
       extend MainThreadNew
 
-      def self.open(target = nil, method: nil, side: :instance, hierarchy: false)
-        new(target, method: method, side: side, hierarchy: hierarchy)
+      def self.open(target = nil, method: nil, side: :instance, hierarchy: false, single: false)
+        new(target, method: method, side: side, hierarchy: hierarchy, single: single)
       end
 
       attr_reader :code
 
-      def initialize(target = nil, method: nil, side: :instance, hierarchy: false)
+      def initialize(target = nil, method: nil, side: :instance, hierarchy: false, single: false)
         @changes = RubyTalk.changes
         @catalog = Reflection.catalog(@changes)
         @category = @klass = @protocol = @method = nil
-        @hierarchy_root = target if hierarchy && target.is_a?(Module) && Reflection.name_of(target)
+        @hierarchy_root = target if (hierarchy || single) && target.is_a?(Module) && Reflection.name_of(target)
+        @single = single && !@hierarchy_root.nil?
         @window = TkToplevel.new
-        GUI.window_title(@window, @hierarchy_root ? "Hierarchy of #{Reflection.name_of(@hierarchy_root)}" : 'System Browser')
+        GUI.window_title(@window, window_title_text)
         GUI.place(@window, kind: :browser)
         build
         GUI.build_menubar(@window, -> { @code })
@@ -56,7 +60,7 @@ module RubyTalk
       def reload
         @catalog = Reflection.catalog(@changes)
         if @hierarchy_root
-          @hierarchy_rows = Reflection.hierarchy(@hierarchy_root)
+          @hierarchy_rows = root_rows
         else
           @categories.set(@catalog.names)
           @categories.select_value(@category, notify: false) if @category
@@ -79,10 +83,21 @@ module RubyTalk
 
       private
 
+      def window_title_text
+        return 'System Browser' unless @hierarchy_root
+
+        "#{@single ? 'Class' : 'Hierarchy of'} #{Reflection.name_of(@hierarchy_root)}"
+      end
+
+      # The rows of the class list in hierarchy mode: the whole hierarchy, or just the one class.
+      def root_rows
+        @single ? [Reflection::HierarchyRow.new(@hierarchy_root, 0)] : Reflection.hierarchy(@hierarchy_root)
+      end
+
       def open_on(target, method, side)
         if @hierarchy_root
-          @hierarchy_rows = Reflection.hierarchy(@hierarchy_root)
-          @categories.set([+"Hierarchy of #{Reflection.name_of(@hierarchy_root)}"])
+          @hierarchy_rows = root_rows
+          @categories.set([+"#{@single ? 'Class' : 'Hierarchy of'} #{Reflection.name_of(@hierarchy_root)}"])
           @categories.select_index(0)
           select_in_hierarchy(target, method: method, side: side)
         else
@@ -114,9 +129,12 @@ module RubyTalk
                                ['New test class', -> { new_test_class }],
                                ['New subclass', -> { new_subclass }],
                                ['Hierarchy of this class', -> { show_hierarchy }],
+                               ['Spawn class', -> { spawn_class }],
+                               ['Versions of this class...', -> { show_class_versions }],
                                ['File out class...', -> { file_out_class }],
                                ['Remove class', -> { remove_class }]])
         @methods.context_menu([['Run this test', -> { run_test }],
+                               ['Spawn method', -> { spawn_method }],
                                ['Versions...', -> { show_versions }],
                                ['Implementors of this selector', -> { selector_search(:implementors) }],
                                ['Senders of this selector', -> { selector_search(:senders) }],
@@ -124,6 +142,7 @@ module RubyTalk
         build_options
         @code = CodeEditor.new(@window, width: 100, height: 18, highlight: true,
                                         evaluator: ->(source) { Evaluator.evaluate(source, workspace_scope, file: 'browser') },
+                                        scope: -> { [@klass, side] }, on_spawn: ->(text) { spawn_code(text) },
                                         on_accept: -> { accept })
         @code.frame.pack(side: 'top', fill: 'both', expand: 1)
       end
@@ -145,7 +164,7 @@ module RubyTalk
                                  command: proc { GUI.safely { side_changed } }).pack(side: 'left', padx: 4)
         end
         TkCheckButton.new(bar, text: 'show inherited', variable: @inherited_var,
-                               command: proc { GUI.safely { refresh_methods } }).pack(side: 'left', padx: 12)
+                               command: proc { GUI.safely { inherited_changed } }).pack(side: 'left', padx: 12)
         @status = TkLabel.new(bar, text: +'', anchor: 'w')
         @status.pack(side: 'left', fill: 'x', expand: 1, padx: 8)
       end
@@ -206,7 +225,7 @@ module RubyTalk
           @protocols.set([])
           return
         end
-        @protocols.set(Reflection::PROTOCOLS.map(&:last), Reflection::PROTOCOLS.map(&:first))
+        refresh_protocols
         @code.set_contents(Reflection.class_definition(klass))
         status(Reflection.class_summary(klass))
       end
@@ -234,8 +253,9 @@ module RubyTalk
         refresh_methods
         return unless protocol
 
-        @code.set_contents(Reflection.method_template)
-        status("New #{side} method on #{Reflection.name_of(@klass)}: edit the template, then Accept.")
+        @code.set_contents(Reflection.method_template(protocol))
+        hint = protocol.is_a?(String) ? " in protocol #{protocol}" : ''
+        status("New #{side} method#{hint} on #{Reflection.name_of(@klass)}: edit the template, then Accept.")
       end
 
       def method_selected(name)
@@ -248,14 +268,30 @@ module RubyTalk
 
       def side_changed
         @method = nil
+        refresh_protocols
         refresh_methods
-        @code.set_contents(Reflection.method_template) if @protocol
+        @code.set_contents(Reflection.method_template(@protocol)) if @protocol
+      end
+
+      def inherited_changed
+        refresh_protocols
+        refresh_methods
+      end
+
+      # The protocol list for the selected class and side: your own protocols (`# protocol: name` comments)
+      # between "all" and public/protected/private. Keeps the selected protocol if it is still there.
+      def refresh_protocols
+        return @protocols.set([]) unless @klass
+
+        list = Reflection.protocol_list(@klass, side, inherited?, @changes)
+        @protocols.set(list.map(&:last), list.map(&:first))
+        @protocol = nil if @protocol && !@protocols.select_value(@protocol, notify: false)
       end
 
       def refresh_methods
         return @methods.set([]) unless @klass && @protocol
 
-        names = Reflection.methods_for(@klass, side, @protocol, inherited?)
+        names = Reflection.methods_for(@klass, side, @protocol, inherited?, @changes)
         labels = names.map { |name| Reflection.method_label(@klass, side, name, @changes) }
         @methods.set(names, labels)
         @methods.select_value(@method, notify: false) if @method
@@ -278,7 +314,7 @@ module RubyTalk
       def class_list_changed(klass, method: nil, side: :instance)
         @catalog = Reflection.catalog(@changes)
         if @hierarchy_root
-          @hierarchy_rows = Reflection.hierarchy(@hierarchy_root)
+          @hierarchy_rows = root_rows
           select_in_hierarchy(klass, method: method, side: side)
         else
           @categories.set(@catalog.names)
@@ -292,6 +328,30 @@ module RubyTalk
 
       def file_out_class
         GUI.file_out_class(@klass) if @klass
+      end
+
+      # Spawn class: a new browser holding only this class.
+      def spawn_class
+        Browser.open(@klass, single: true) if @klass.is_a?(Module) && Reflection.name_of(@klass)
+      end
+
+      # Spawn method: the selected method in a window of its own (edits in the code pane come along).
+      def spawn_method
+        return unless @klass && @method
+
+        spawn_code(@code.contents)
+      end
+
+      # Spawn the code pane. A method that is selected goes into its own method window, carrying any edits
+      # not yet accepted, and the pane goes back to the stored source (nothing is lost: the edits are in
+      # the new window). Anything else (a class definition, a new-method template) goes to a Workspace.
+      def spawn_code(text)
+        if @klass && @method && @protocol
+          GUI.spawn_method(@klass, side, @method, text)
+          method_selected(@method) if text != Reflection.method_text(@klass, side, @method, @changes)
+        else
+          GUI.spawn_workspace(text)
+        end
       end
 
       def run_class_tests
@@ -325,6 +385,13 @@ module RubyTalk
         method_selected(@method) if @method
       end
 
+      # Earlier definitions of the class (or its comment); a revert redisplays the class.
+      def show_class_versions
+        return unless @klass.is_a?(Module) && Reflection.name_of(@klass)
+
+        VersionsWindow.new(@klass, :instance, nil, on_change: -> { class_selected(@klass) })
+      end
+
       def selector_search(kind)
         GUI.show_method_list(kind, @method.to_s) if @method
       end
@@ -343,6 +410,7 @@ module RubyTalk
 
         result = Compiler.remove_method(@klass, side, @method, @changes)
         @method = nil unless result == :reverted
+        refresh_protocols
         refresh_methods
         if result == :reverted
           method_selected(@method)
@@ -365,13 +433,14 @@ module RubyTalk
         if @hierarchy_root
           @klass = nil
           @hierarchy_root = Object if removed.equal?(@hierarchy_root)
-          @hierarchy_rows = Reflection.hierarchy(@hierarchy_root)
+          @hierarchy_rows = root_rows
           refresh_classes
         else
           @categories.set(@catalog.names)
           @categories.select_value(Reflection::USER)
         end
         status('Class removed.')
+        GUI.close_window(@window, :browser) if @single
       rescue Compiler::Error => e
         status(e.message)
       end
