@@ -45,10 +45,51 @@ module RubyTalk
       end
     end
 
+    # A class or module that Ruby knows about but has not loaded yet: a constant declared
+    # with `autoload` (BioRuby declares most of its classes this way). It is listed in the
+    # browser so it can be found; selecting it loads it (see Reflection.load_pending).
+    Pending = Struct.new(:name, :path)
+
+    MODULE_CONSTANTS = Module.instance_method(:constants)
+    MODULE_AUTOLOAD = Module.instance_method(:autoload?)
+
     module_function
 
+    # The name of a module, or of a Pending autoload entry.
     def name_of(mod)
+      return mod.name if Pending === mod
+
       MODULE_NAME.bind_call(mod)
+    end
+
+    # What the class list shows for +mod+.
+    def list_label(mod)
+      Pending === mod ? "#{mod.name}  (not loaded)" : name_of(mod)
+    end
+
+    # Autoload constants that have not been resolved yet, across all loaded modules.
+    # Asking does not load anything.
+    def pending_autoloads
+      pending = []
+      all_modules.each do |owner|
+        MODULE_CONSTANTS.bind_call(owner, false).each do |const|
+          path = MODULE_AUTOLOAD.bind_call(owner, const, false) or next
+          prefix = owner.equal?(Object) ? '' : "#{name_of(owner)}::"
+          pending << Pending.new("#{prefix}#{const}", path)
+        end
+      rescue StandardError
+        next # a module that will not list its constants is simply skipped
+      end
+      pending.sort_by(&:name)
+    end
+
+    # Load a Pending entry and return the class or module. Raises if the autoload fails
+    # (LoadError, a NameError inside the library ...) or does not define a module.
+    def load_pending(pending)
+      mod = Object.const_get(pending.name)
+      raise TypeError, "#{pending.name} is not a class or module" unless mod.is_a?(Module)
+
+      mod
     end
 
     def lookup(name)
@@ -82,6 +123,7 @@ module RubyTalk
       return category if category
       return 'Exceptions' if mod.is_a?(Class) && mod <= Exception
       return "Nested: #{top}" if name.include?('::')
+      return 'Other' if Pending === mod # not loaded: we cannot tell a class from a module
 
       mod.is_a?(Class) ? 'Other' : 'Modules'
     end
@@ -90,6 +132,7 @@ module RubyTalk
       groups = Hash.new { |hash, key| hash[key] = [] }
       groups[USER]
       all_modules.each { |mod| groups[category_of(mod, changes)] << mod }
+      pending_autoloads.each { |entry| groups[category_of(entry, changes)] << entry }
       order = [USER] + CATEGORY_TABLE.map(&:first) + %w[Exceptions Modules Other]
       names = (order & groups.keys) + (groups.keys - order).sort
       Catalog.new(groups, names + [ALL])

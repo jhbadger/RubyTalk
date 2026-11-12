@@ -51,6 +51,32 @@ module RubyTalk
         @methods.select_value(method.to_sym)
       end
 
+      # Rebuild the category and class lists from the running system (e.g. after a Do it
+      # that did `require 'bio'`), keeping the current selection.
+      def reload
+        @catalog = Reflection.catalog(@changes)
+        if @hierarchy_root
+          @hierarchy_rows = Reflection.hierarchy(@hierarchy_root)
+        else
+          @categories.set(@catalog.names)
+          @categories.select_value(@category, notify: false) if @category
+        end
+        refresh_classes
+      end
+
+      # Reload every open browser, but only if classes or modules were added or removed
+      # since +before+ (a value from Browser.module_count).
+      def self.reload_all_if_changed(before)
+        return if module_count == before
+
+        GUI.windows.grep(Browser).each(&:reload)
+      end
+
+      def self.module_count
+        counts = ObjectSpace.count_objects
+        counts[:T_CLASS] + counts[:T_MODULE]
+      end
+
       private
 
       def open_on(target, method, side)
@@ -163,7 +189,7 @@ module RubyTalk
         pairs = if @hierarchy_root
                   @hierarchy_rows.map { |row| [row.klass, row.label] }
                 else
-                  (@category ? @catalog.classes_in(@category) : []).map { |mod| [mod, Reflection.name_of(mod)] }
+                  (@category ? @catalog.classes_in(@category) : []).map { |mod| [mod, Reflection.list_label(mod)] }
                 end
         needle = @classes.filter_text.strip.downcase
         pairs = pairs.select { |mod, _| Reflection.name_of(mod).downcase.include?(needle) } unless needle.empty?
@@ -171,6 +197,8 @@ module RubyTalk
       end
 
       def class_selected(klass)
+        return load_pending(klass) if Reflection::Pending === klass
+
         @klass = klass
         @protocol = @method = nil
         @methods.set([])
@@ -181,6 +209,23 @@ module RubyTalk
         @protocols.set(Reflection::PROTOCOLS.map(&:last), Reflection::PROTOCOLS.map(&:first))
         @code.set_contents(Reflection.class_definition(klass))
         status(Reflection.class_summary(klass))
+      end
+
+      # A class listed as "(not loaded)" was picked: run its autoload, then show the real thing.
+      # If loading fails, say why and leave the entry in the list.
+      def load_pending(pending)
+        @klass = @protocol = @method = nil
+        @protocols.set([])
+        @methods.set([])
+        status("Loading #{pending.name} ...")
+        before = Browser.module_count
+        loaded = Reflection.load_pending(pending)
+        Browser.reload_all_if_changed(before)
+        class_list_changed(loaded)
+      rescue StandardError, ScriptError => e
+        message = "Could not load #{pending.name} (#{pending.path}): #{e.class}: #{e.message.lines.first.to_s.strip}"
+        status(message)
+        ::Transcript.show_cr(message)
       end
 
       def protocol_selected(protocol)

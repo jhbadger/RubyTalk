@@ -1578,6 +1578,60 @@ class CoreTest < Minitest::Test
     Object.send(:remove_const, :RtCat) if defined?(RtCat)
   end
 
+  # A `require` of a library (BioRuby's `require 'bio'`, say) makes its classes browsable.
+  def test_required_library_classes_and_methods_are_browsable
+    File.write(File.join(@dir, 'rtfakebio.rb'), <<~RUBY)
+      # A sequence of nucleotides.
+      module RtFakeBio
+        class Sequence
+          def complement
+            reverse
+          end
+        end
+        class Error < StandardError; end
+      end
+    RUBY
+    refute defined?(RtFakeBio), 'not loaded until required'
+    $LOAD_PATH.unshift(@dir)
+    require 'rtfakebio'
+    catalog = RubyTalk::Reflection.catalog(@changes)
+    assert_includes catalog.classes_in('Modules'), RtFakeBio
+    assert_includes catalog.classes_in('Nested: RtFakeBio'), RtFakeBio::Sequence
+    assert_includes catalog.classes_in('All Classes'), RtFakeBio::Error
+    refute_includes catalog.classes_in('User-Defined'), RtFakeBio::Sequence, 'required, not created in RubyTalk'
+    assert_includes RubyTalk::Reflection.methods_for(RtFakeBio::Sequence, :instance, :public, false), :complement
+    assert_match(/def complement/, RubyTalk::Reflection.method_text(RtFakeBio::Sequence, :instance, :complement))
+  ensure
+    $LOAD_PATH.delete(@dir)
+    Object.send(:remove_const, :RtFakeBio) if defined?(RtFakeBio)
+  end
+
+  # BioRuby declares most classes with `autoload`: they are listed before they are loaded.
+  def test_pending_autoloads_are_listed_and_can_be_loaded
+    File.write(File.join(@dir, 'rtlazy_seq.rb'), "module RtLazy\n  class Seq\n    def length2\n      2\n    end\n  end\nend\n")
+    File.write(File.join(@dir, 'rtlazy_broken.rb'), "raise LoadError, 'cannot load such file -- missing_dependency'\n")
+    Object.const_set(:RtLazy, Module.new)
+    RtLazy.autoload(:Seq, File.join(@dir, 'rtlazy_seq.rb'))
+    RtLazy.autoload(:Broken, File.join(@dir, 'rtlazy_broken.rb'))
+    refute_includes RubyTalk::Reflection.all_modules.map { |m| RubyTalk::Reflection.name_of(m) }, 'RtLazy::Seq'
+
+    pending = RubyTalk::Reflection.catalog(@changes).classes_in('Nested: RtLazy')
+    seq = pending.find { |entry| entry.name == 'RtLazy::Seq' }
+    assert_kind_of RubyTalk::Reflection::Pending, seq
+    assert_equal 'RtLazy::Seq  (not loaded)', RubyTalk::Reflection.list_label(seq)
+    assert_includes RubyTalk::Reflection.catalog(@changes).classes_in('All Classes'), seq
+
+    assert_raises(LoadError) { RubyTalk::Reflection.load_pending(pending.find { |e| e.name == 'RtLazy::Broken' }) }
+
+    assert_equal RtLazy::Seq, RubyTalk::Reflection.load_pending(seq)
+    after = RubyTalk::Reflection.catalog(@changes).classes_in('Nested: RtLazy')
+    assert_includes after, RtLazy::Seq
+    refute(after.any? { |entry| entry.is_a?(RubyTalk::Reflection::Pending) && entry.name == 'RtLazy::Seq' })
+    assert_includes RubyTalk::Reflection.methods_for(RtLazy::Seq, :instance, :public, false), :length2
+  ensure
+    Object.send(:remove_const, :RtLazy) if defined?(RtLazy)
+  end
+
   def test_graphics_classes_are_listed_in_their_own_category
     catalog = RubyTalk::Reflection.catalog(@changes)
     assert_includes catalog.names, 'Graphics-Primitives'

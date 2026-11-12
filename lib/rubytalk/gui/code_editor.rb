@@ -192,8 +192,10 @@ module RubyTalk
           return nil
         end
 
+        modules_before = Browser.module_count
         result = @evaluator.call(source)
         GUI.notify_error(result.error, result.failure) unless result.ok
+        Browser.reload_all_if_changed(modules_before) # e.g. a require added classes
         [result, first, last]
       end
 
