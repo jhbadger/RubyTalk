@@ -244,4 +244,28 @@ class CoreReflectionTest < CoreCase
     method = String.method(:new).unbind
     assert_match(/class side|Class/, RubyTalk::Reflection.owner_label(method.owner))
   end
+
+  # RubyGems deprecates some constants (Gem::List on Ruby 4.0). Looking every module up by name must not
+  # warn about them: the Browser does it for the whole system, and $stderr is the Transcript during a do it.
+  def test_looking_up_deprecated_constants_does_not_warn
+    require 'stringio'
+    Object.const_set(:RtDeprecatedClass, Class.new)
+    Object.send(:deprecate_constant, :RtDeprecatedClass)
+    saved_stderr = $stderr
+    saved_flag = Warning[:deprecated]
+    $stderr = StringIO.new
+    Warning[:deprecated] = true
+    modules = RubyTalk::Reflection.all_modules
+    RubyTalk::Reflection.catalog(@changes)
+    found = RubyTalk::Reflection.lookup('RtDeprecatedClass')
+    warned = $stderr.string
+    assert_includes modules.map { |mod| RubyTalk::Reflection.name_of(mod) }, 'RtDeprecatedClass'
+    assert_kind_of Class, found
+    assert_empty warned, 'no deprecation warnings'
+    assert_equal true, Warning[:deprecated], 'the setting is put back'
+  ensure
+    $stderr = saved_stderr
+    Warning[:deprecated] = saved_flag
+    Object.send(:remove_const, :RtDeprecatedClass) if Object.const_defined?(:RtDeprecatedClass)
+  end
 end

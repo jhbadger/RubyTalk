@@ -226,12 +226,12 @@ module RubyTalk
     def lookup_from(word, klass)
       if klass
         begin
-          return klass.const_get(word)
+          return Reflection.quietly { klass.const_get(word) }
         rescue NameError
           nil
         end
       end
-      Object.const_get(word)
+      Reflection.quietly { Object.const_get(word) }
     rescue NameError, LoadError
       nil
     end

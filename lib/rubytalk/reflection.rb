@@ -104,10 +104,22 @@ module RubyTalk
     def lookup(name)
       return nil if name.nil? || name.empty?
 
-      object = Object.const_get(name)
+      object = quietly { Object.const_get(name) }
       object.is_a?(Module) ? object : nil
     rescue NameError, LoadError
       nil
+    end
+
+    # Run the block with deprecation warnings off, then put the setting back. Looking a constant up by
+    # name warns if it is deprecated (RubyGems deprecates several, such as Gem::List), and the
+    # browser looks up every module in the system, so without this each one would write a warning.
+    # (To the Transcript too, while a do it runs: $stderr is redirected there.)
+    def quietly
+      previous = Warning[:deprecated]
+      Warning[:deprecated] = false
+      yield
+    ensure
+      Warning[:deprecated] = previous
     end
 
     # Is +mod+ still reachable by its own name? A class removed with remove_const keeps

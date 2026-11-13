@@ -67,7 +67,7 @@ ruby bin/rubytalk --icon-png 512 icon.png         # just the icon, any size
 ## Install as a gem, and develop
 
 ```
-gem build rubytalk.gemspec && gem install rubytalk-0.1.0.gem   # puts `rubytalk` on your path (needs Tcl/Tk: see Run)
+gem build rubytalk.gemspec && gem install rubytalk-0.2.0.gem   # puts `rubytalk` on your path (needs Tcl/Tk: see Run)
 bundle install               # development tools only; the tk gem is optional (see the Gemfile)
 rake test                    # every test file, each in its own process (no display or Tcl/Tk needed)
 rake selftest                # the real windows with real Tk
