@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# A stand-in for the 'tk' gem, used ONLY by test/test_gui_smoke.rb so the GUI code
+# A stand-in for the 'tk' gem, used ONLY by the test_gui_*.rb tests so the GUI code
 # can be exercised on a machine with no display. It records state (text contents,
 # list items, menu entries, bindings) and accepts any other call silently.
 # It does not prove the real Tk API calls are right; it catches typos, nil

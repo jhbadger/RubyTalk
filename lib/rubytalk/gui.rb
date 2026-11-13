@@ -15,12 +15,8 @@ module RubyTalk
 
     @windows = []
     @last_pump = 0.0
-    @cascade = 0
     @main_queue = Queue.new
     @main_window = nil
-    @layout_windows = [] # [window, kind] for every window of a remembered kind
-    @kind_counts = Hash.new(0)
-    @session_layout = nil
 
     # Do its run on a worker thread (so Stop can interrupt them), but Tk must only
     # be used from the main thread. Anything the worker needs done in a window
@@ -153,84 +149,6 @@ module RubyTalk
       # icon even when RubyTalk is not run from the app bundle). nil if Tk refused it.
       attr_reader :icon_image
 
-      # Where a new window goes. A kind of window (:browser, :workspace ...) that was open when you last
-      # quit comes back at its remembered size and position (a second one of the same kind is nudged so
-      # they do not coincide); otherwise windows are staggered so they do not stack exactly on top of
-      # each other. Windows of a known kind remember their layout when closed or when you quit.
-      def place(window, x: nil, y: nil, kind: nil)
-        @layout_windows << [window, kind] if kind
-        spec = kind && remembered_geometry(kind)
-        if spec
-          Tk.tk_call('wm', 'geometry', window.path, spec)
-        else
-          unless x
-            step = @cascade % 8
-            @cascade += 1
-            x = 70 + (step * 28)
-            y = 80 + (step * 28)
-          end
-          Tk.tk_call('wm', 'geometry', window.path, "+#{x}+#{y}")
-        end
-        window.protocol('WM_DELETE_WINDOW') { close_window(window, kind) } if kind && !window.is_a?(TkRoot)
-      end
-
-      # The saved size and position for +kind+, kept on screen, nudged for each further window of that
-      # kind in this session. nil if there is none.
-      def remembered_geometry(kind)
-        saved = Preferences.layout[kind.to_s] or return nil
-
-        count = (@kind_counts[kind] += 1) - 1
-        width, height, x, y = saved.match(Preferences::GEOMETRY).captures.map(&:to_i)
-        fit_on_screen(width, height, x + (count % 8) * 28, y + (count % 8) * 28)
-      end
-
-      # A geometry string with the window no bigger than the screen and at least a corner of it showing.
-      def fit_on_screen(width, height, x, y)
-        screen_width = Tk.tk_call('winfo', 'screenwidth', '.').to_i
-        screen_height = Tk.tk_call('winfo', 'screenheight', '.').to_i
-        width = [width, screen_width - 40].min
-        height = [height, screen_height - 80].min
-        x = x.clamp(-(width - 100), screen_width - 100)
-        y = y.clamp(0, screen_height - 60)
-        "#{width}x#{height}#{format('%+d', x)}#{format('%+d', y)}"
-      end
-
-      # WM_DELETE_WINDOW for these windows: remember where it was, then close it.
-      def close_window(window, kind)
-        remember_geometry(window, kind)
-        window.destroy
-      end
-
-      def remember_geometry(window, kind)
-        spec = Tk.tk_call('wm', 'geometry', window.path).to_s
-        (@session_layout ||= {})[kind.to_s] = spec if spec.match?(Preferences::GEOMETRY)
-      rescue StandardError
-        nil
-      end
-
-      # Write the layout: for each kind, the geometry of the newest window still open, over what
-      # closed windows left behind. Called when you quit or switch directory.
-      def save_layout
-        layout = (@session_layout || {}).dup
-        @layout_windows.select! { |window, _kind| window_exists?(window) }
-        @layout_windows.each { |window, kind| remember_geometry(window, kind) } # later windows overwrite earlier ones
-        layout.merge!(@session_layout || {})
-        Preferences.save_layout(layout) unless layout.empty?
-      end
-
-      def window_exists?(window)
-        Tk.tk_call('winfo', 'exists', window.path).to_s == '1'
-      rescue StandardError
-        false
-      end
-
-      # For tests: forget which windows were opened and their remembered geometries.
-      def reset_layout_state
-        @layout_windows.clear
-        @session_layout = nil
-        @kind_counts.clear
-      end
-
       def set_window_icon
         @icon_image = Tk.tk_call('image', 'create', 'photo', '-data', Icon.png_base64(128).dup).to_s
         Tk.tk_call('wm', 'iconphoto', '.', '-default', @icon_image)
@@ -288,101 +206,6 @@ module RubyTalk
         (((0.299 * red) + (0.587 * green) + (0.114 * blue)) / 65_535.0) < 0.5
       rescue StandardError
         false
-      end
-
-      # Run the tests of +klass+ (a Minitest class itself, or the class FooTest/TestFoo/FooSpec
-      # tests) and show the results.
-      def run_tests_for(klass)
-        name = Reflection.name_of(klass)
-        classes = TestRunner.test_classes_for(klass)
-        if classes.empty?
-          ::Transcript.show_cr("No tests found for #{name}. Define a Minitest class named #{name}Test " \
-                               '(class list right-click > New test class).')
-          return
-        end
-        run_tests(classes, name)
-      end
-
-      # One test method of a test class.
-      def run_test_method(klass, method_name)
-        run_tests([klass], "#{Reflection.name_of(klass)}##{method_name}", method_name.to_s)
-      end
-
-      def run_all_user_tests
-        classes = TestRunner.user_test_classes
-        return ::Transcript.show_cr('No test classes have been created in RubyTalk yet.') if classes.empty?
-
-        run_tests(classes, 'all your tests')
-      end
-
-      # Run on the evaluator (a worker thread: Stop works, the windows stay alive), then show a
-      # results window whose Run Again / Run Failures call back into this.
-      def run_tests(classes, title, filter = nil)
-        runner = lambda do |only|
-          report = nil
-          result = Evaluator.run { report = TestRunner.run(classes, filter: only) }
-          # A run that could not be made (not a failing test: those are results) is shown like any error.
-          notify_error(result.error, result.failure) unless result.ok || result.error.is_a?(TestRunner::Error)
-          result.ok ? report : nil
-        end
-        report = runner.call(filter)
-        TestResultsWindow.new(title, report, runner: runner, filter: filter) if report
-      end
-
-      # System > File Out Changes as Ruby...: everything recorded in changes.rb, as plain Ruby.
-      # +path+ skips the dialog (tests, scripts).
-      def file_out_changes(path = nil)
-        path ||= choose_save_file('rubytalk_changes.rb') or return
-        write_filed_out(Exchange.all_source, path, 'all changes')
-      end
-
-      # Class list > File out class...: the changes made to +klass+, as plain Ruby.
-      def file_out_class(klass, path = nil)
-        name = Reflection.name_of(klass)
-        text = Exchange.class_source(klass)
-        return ::Transcript.show_cr("Nothing to file out: #{name} has no recorded changes.") unless text
-
-        path ||= choose_save_file("#{name.gsub('::', '_').gsub(/([a-z\d])([A-Z])/, '\\1_\\2').downcase}.rb") or return
-        write_filed_out(text, path, name)
-      end
-
-      # System > File In...: plain Ruby (taken apart into per-method changes) or RubyTalk's own
-      # changes format. Returns the Exchange::Summary, or nil if cancelled.
-      def file_in(path = nil)
-        path ||= choose_open_file or return
-        summary = Exchange.file_in_path(path)
-        ::Transcript.show_cr("Filed in #{File.basename(path)}: #{summary}")
-        summary.errors.each { |error| ::Transcript.show_cr("  #{error}") }
-        summary
-      rescue SystemCallError => e
-        ::Transcript.show_cr("Could not read #{path}: #{e.message}")
-        nil
-      end
-
-      def write_filed_out(text, path, what)
-        File.write(path, text, encoding: 'UTF-8')
-        ::Transcript.show_cr("Filed out #{what} to #{path}")
-        path
-      rescue SystemCallError => e
-        ::Transcript.show_cr("Could not write #{path}: #{e.message}")
-        nil
-      end
-
-      # The file dialogs start in the folder of the current image. nil if cancelled.
-      def choose_save_file(initial_name)
-        chosen = Tk.tk_call('tk_getSaveFile', '-initialfile', initial_name.dup, '-defaultextension', '.rb',
-                            '-initialdir', dialog_directory, '-title', 'File out as Ruby').to_s
-        chosen.empty? ? nil : chosen
-      end
-
-      def choose_open_file
-        chosen = Tk.tk_call('tk_getOpenFile', '-initialdir', dialog_directory, '-title', 'File in',
-                            '-filetypes', '{{Ruby files} .rb} {{All files} *}').to_s
-        chosen.empty? ? nil : chosen
-      end
-
-      def dialog_directory
-        RubyTalk.changes ? File.dirname(RubyTalk.changes.path) : Dir.pwd
       end
 
       # Explain it: the answer goes to the Transcript (nothing is run, nothing modal gets in the way).
@@ -570,6 +393,8 @@ module RubyTalk
   end
 end
 
+require_relative 'gui/layout'
+require_relative 'gui/commands'
 require_relative 'gui/selectable_list'
 require_relative 'gui/find_bar'
 require_relative 'gui/code_editor'

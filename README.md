@@ -385,35 +385,48 @@ lib/rubytalk/graphics/*.rb   Point, Rectangle, Form, BitBlt, Pen ... and the MVC
 lib/rubytalk/app_bundle.rb   builds RubyTalk.app
 lib/rubytalk/cli.rb          command-line options
 lib/rubytalk/reflection.rb   categories, method lists, definition text (no GUI)
-lib/rubytalk/gui/*.rb        Tk windows (gui/graphics_window.rb hosts MVC windows; gui/self_test.rb is the --selftest; versions_window.rb the Versions window; debugger.rb the Debugger; test_results_window.rb the test results; find_bar.rb Find and Replace)
-test/test_core.rb            headless tests of everything above
-test/test_gui_smoke.rb       drives the windows against a recording stand-in for tk
-test/test_explainer.rb       Explain it, headless
-test/test_changes_safety.rb  changes.rb format version, atomic saves (including a real kill -9 during a save), failed chunks
-test/test_class_versions.rb  versions of class definitions and comments
-test/test_protocols.rb       `# protocol:` categories, in the reflection layer and the Browser
-test/test_parsing.rb         one-pass statement splitting, Ripper syntax errors, the Senders cache, raise recording
-test/test_gui_explain_spawn.rb  Explain it and Spawn in the windows, against the stand-in for tk
-test/test_highlighter.rb      syntax highlighting (token classes, byte-to-character columns, bad input)
-test/test_graphics.rb        graphics classes and the MVC framework, headless
-test/test_icon.rb            icon pixels, .icns structure, app bundle (runs its launcher), CLI
+lib/rubytalk/gui.rb          GUI module: event pump, menus, dialogs, helpers shared by all windows
+lib/rubytalk/gui/layout.rb   where windows go and remembering it (GUI.place, GUI.save_layout ...)
+lib/rubytalk/gui/commands.rb System-menu commands: run tests, file out / file in
+lib/rubytalk/gui/*.rb        the Tk windows (browser, workspace, inspector, debugger, versions_window, method_list,
+                             find_bar, test_results_window; graphics_window.rb hosts MVC windows)
+lib/rubytalk/gui/self_test.rb  the --selftest runner; its checks are in gui/self_test/*_checks.rb
+```
+
+Tests live in `test/`, one file per area, each runnable on its own (`ruby test/test_core_compiler.rb`) and
+all run by `rake test`. The big areas share their setup through a base class in `test/support/`:
+
+```
+test_core_*.rb               headless: evaluator and debugger support, compiler and changes.rb,
+                             search and versions, file out/in, editing, test runner, reflection  (support/core_case.rb)
+test_gui_*.rb                the windows against a recording stand-in for tk (test/fake/tk.rb)  (support/gui_case.rb)
+test_graphics.rb             Point, Rectangle, Color, Form, BitBlt, Pen, Paths, Font, Cursor, Dependents
+test_mvc_*.rb                the Model-View-Controller framework: core, widgets, input        (support/mvc_case.rb)
+test_text_editing.rb         the text-editing widget and the Notes example
+test_explainer.rb            Explain it, headless
+test_gui_explain_spawn.rb    Explain it and Spawn in the windows
+test_changes_safety.rb       changes.rb format version, atomic saves (including a real kill -9 during a save), failed chunks
+test_class_versions.rb       versions of class definitions and comments
+test_protocols.rb            `# protocol:` categories, in the reflection layer and the Browser
+test_parsing.rb              one-pass statement splitting, Ripper syntax errors, the Senders cache, raise recording
+test_highlighter.rb          syntax highlighting (token classes, byte-to-character columns, bad input)
+test_icon.rb                 icon pixels, .icns structure, app bundle (runs its launcher), CLI
 ```
 
 ```
-ruby test/test_core.rb
-ruby test/test_gui_smoke.rb
-ruby test/test_explainer.rb
-ruby test/test_changes_safety.rb
-ruby test/test_class_versions.rb
-ruby test/test_protocols.rb
-ruby test/test_parsing.rb
-ruby test/test_gui_explain_spawn.rb
-ruby test/test_icon.rb
-ruby test/test_highlighter.rb
-ruby test/test_graphics.rb
+rake test                    everything, each file in its own process
+ruby test/test_protocols.rb  one area
 ```
 
-The smoke test uses `test/fake/tk.rb`, so it checks RubyTalk's own GUI logic but cannot
+**Who owns what.** The unit tests (`test_core_*`, `test_mvc_*`, the rest) own the *logic*: what a command
+computes, edge cases, error messages. `test_gui_*` owns RubyTalk's *wiring*: that a menu entry, key binding
+or list click reaches the right code, against the stand-in for tk. `--selftest` owns what only real Tk can
+show: it drives actual widgets (typing, selection, key and mouse events) end to end, one check per feature,
+and is deliberately shallow. `test_gui_selftest.rb` runs that same self-test against the stand-in so its own
+logic is covered without a display. When adding a feature: put the detailed cases in a unit or `test_gui_`
+file, and add at most one `--selftest` check that proves it works through real widgets.
+
+The GUI tests use `test/fake/tk.rb`, so they check RubyTalk's own GUI logic but cannot
 validate real Tk behaviour. The fake is strict about one real-Tk trap: it raises FrozenError if
 a frozen string reaches a widget (the tk gem calls `force_encoding` on what it is given), which is
 why the files under `gui/` do not use `# frozen_string_literal: true`. It also runs the
